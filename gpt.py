@@ -1,3 +1,6 @@
+import argparse
+import os
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -15,7 +18,23 @@ n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+checkpoint_dir = "checkpoints"
 # ------------
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--infer",
+    type=str,
+    default=None,
+    help="Path to a checkpoint .pt file. If set, skip training and just generate text.",
+)
+parser.add_argument(
+    "--max-new-tokens",
+    type=int,
+    default=500,
+    help="Number of tokens to generate.",
+)
+args = parser.parse_args()
 
 torch.manual_seed(1337)
 
@@ -216,27 +235,47 @@ m = model.to(device)
 # print the number of parameters in the model
 print(sum(p.numel() for p in m.parameters()) / 1e6, "M parameters")
 
-# create a PyTorch optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+if args.infer is not None:
+    print(f"loading checkpoint from {args.infer}")
+    ckpt = torch.load(args.infer, map_location=device)
+    model.load_state_dict(ckpt["model"])
+    model.eval()
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(decode(m.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+else:
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
-for iter in range(max_iters):
-    # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0 or iter == max_iters - 1:
-        losses = estimate_loss()
-        print(
-            f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
-        )
+    # create a PyTorch optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-    # sample a batch of data
-    xb, yb = get_batch("train")
+    for iter in range(max_iters):
+        # every once in a while evaluate the loss on train and val sets and save a checkpoint
+        if iter % eval_interval == 0 or iter == max_iters - 1:
+            losses = estimate_loss()
+            print(
+                f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
+            )
+            ckpt_path = os.path.join(checkpoint_dir, f"ckpt_step_{iter:05d}.pt")
+            torch.save(
+                {
+                    "iter": iter,
+                    "model": model.state_dict(),
+                    "train_loss": losses["train"].item(),
+                    "val_loss": losses["val"].item(),
+                },
+                ckpt_path,
+            )
+            print(f"  saved checkpoint to {ckpt_path}")
 
-    # evaluate the loss
-    logits, loss = model(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+        # sample a batch of data
+        xb, yb = get_batch("train")
 
-# generate from the model
-context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
-# open('more.txt', 'w').write(decode(m.generate(context, max_new_tokens=10000)[0].tolist()))
+        # evaluate the loss
+        logits, loss = model(xb, yb)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+    # generate from the model
+    context = torch.zeros((1, 1), dtype=torch.long, device=device)
+    print(decode(m.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
