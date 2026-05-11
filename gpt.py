@@ -3,23 +3,66 @@ import os
 
 import torch
 import torch.nn as nn
+from pydantic import BaseModel, model_validator
 from torch.nn import functional as F
 
-# hyperparameters
-batch_size = 64 * 2  # 64  # how many independent sequences will we process in parallel?
-block_size = 256 * 2  # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 50  ###50
-learning_rate = 3e-4
+
+class Hyperparameters(BaseModel):
+    # Architecture (persisted to checkpoint, restored on inference)
+    n_embd: int = 384
+    n_head: int = 6
+    n_layer: int = 6
+    block_size: int = 512
+    dropout: float = 0.2
+    # Training (not persisted; only used in the training branch)
+    batch_size: int = 128
+    max_iters: int = 5000
+    eval_interval: int = 50
+    eval_iters: int = 200
+    learning_rate: float = 3e-4
+
+    @model_validator(mode="after")
+    def _check(self):
+        assert self.n_embd % self.n_head == 0, (
+            f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})"
+        )
+        return self
+
+    def architecture_dict(self) -> dict:
+        return {
+            "n_embd": self.n_embd,
+            "n_head": self.n_head,
+            "n_layer": self.n_layer,
+            "block_size": self.block_size,
+            "dropout": self.dropout,
+        }
+
+
+PROFILES: dict[str, Hyperparameters] = {
+    "default": Hyperparameters(),
+    "tiny": Hyperparameters(
+        n_embd=64,
+        n_head=4,
+        n_layer=2,
+        block_size=64,
+        batch_size=32,
+        max_iters=1000,
+    ),
+    "large": Hyperparameters(
+        n_embd=768,
+        n_head=12,
+        n_layer=12,
+        block_size=1024,
+        batch_size=64,
+        max_iters=20000,
+    ),
+}
+
+ACTIVE_PROFILE = "default"
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 assert device == "cuda"
-eval_iters = 200
-n_embd = 384
-n_head = 6
-n_layer = 6
-dropout = 0.2
 checkpoint_dir = "checkpoints"
-# ------------
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -199,12 +242,12 @@ if args.infer is not None:
     itos = {i: ch for i, ch in enumerate(chars)}
     decode = lambda l: "".join([itos[i] for i in l])
 
-    hp = ckpt["hparams"]
-    n_embd = hp["n_embd"]
-    n_head = hp["n_head"]
-    n_layer = hp["n_layer"]
-    block_size = hp["block_size"]
-    dropout = hp["dropout"]
+    hp = Hyperparameters(**ckpt["hparams"])
+    n_embd = hp.n_embd
+    n_head = hp.n_head
+    n_layer = hp.n_layer
+    block_size = hp.block_size
+    dropout = hp.dropout
     print(
         f"  architecture: n_embd={n_embd} n_head={n_head} n_layer={n_layer} "
         f"block_size={block_size} dropout={dropout}"
@@ -218,6 +261,19 @@ if args.infer is not None:
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     print(decode(m.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
 else:
+    hp = PROFILES[ACTIVE_PROFILE]
+    print(f"Using profile '{ACTIVE_PROFILE}': {hp.model_dump()}")
+    n_embd = hp.n_embd
+    n_head = hp.n_head
+    n_layer = hp.n_layer
+    block_size = hp.block_size
+    dropout = hp.dropout
+    batch_size = hp.batch_size
+    max_iters = hp.max_iters
+    eval_interval = hp.eval_interval
+    eval_iters = hp.eval_iters
+    learning_rate = hp.learning_rate
+
     INPUT_PATH = "input.txt"
     INPUT_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories-train.txt"
 
@@ -302,13 +358,7 @@ else:
                     "train_loss": losses["train"].item(),
                     "val_loss": losses["val"].item(),
                     "chars": chars,
-                    "hparams": {
-                        "n_embd": n_embd,
-                        "n_head": n_head,
-                        "n_layer": n_layer,
-                        "block_size": block_size,
-                        "dropout": dropout,
-                    },
+                    "hparams": hp.architecture_dict(),
                 },
                 ckpt_path,
             )
