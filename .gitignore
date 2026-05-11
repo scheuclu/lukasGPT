@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 checkpoints/
+input.txt
+input_shakespeare.txt
