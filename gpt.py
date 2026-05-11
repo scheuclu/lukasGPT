@@ -6,10 +6,10 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # hyperparameters
-batch_size = 64  # how many independent sequences will we process in parallel?
-block_size = 256  # what is the maximum context length for predictions?
+batch_size = 64 * 2  # 64  # how many independent sequences will we process in parallel?
+block_size = 256 * 2  # what is the maximum context length for predictions?
 max_iters = 5000
-eval_interval = 50
+eval_interval = 50  ###50
 learning_rate = 3e-4
 device = "cuda" if torch.cuda.is_available() else "cpu"
 assert device == "cuda"
@@ -41,6 +41,8 @@ torch.manual_seed(1337)
 # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
 with open("input.txt", "r", encoding="utf-8") as f:
     text = f.read()
+
+print("text is in RAM")
 
 # here are all the unique characters that occur in this text
 chars = sorted(list(set(text)))
