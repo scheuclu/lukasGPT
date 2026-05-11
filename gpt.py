@@ -38,8 +38,28 @@ args = parser.parse_args()
 
 torch.manual_seed(1337)
 
-# wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-with open("input.txt", "r", encoding="utf-8") as f:
+INPUT_PATH = "input.txt"
+INPUT_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories-train.txt"
+
+if not os.path.exists(INPUT_PATH):
+    import urllib.request
+
+    print(f"{INPUT_PATH} not found. Downloading from {INPUT_URL} (~1.9 GB)...")
+
+    def _progress(block_num, block_size, total_size):
+        downloaded = block_num * block_size
+        if total_size > 0:
+            pct = min(100, downloaded * 100 // total_size)
+            print(
+                f"\r  {downloaded / 1e9:.2f} / {total_size / 1e9:.2f} GB ({pct}%)",
+                end="",
+                flush=True,
+            )
+
+    urllib.request.urlretrieve(INPUT_URL, INPUT_PATH, reporthook=_progress)
+    print()
+
+with open(INPUT_PATH, "r", encoding="utf-8") as f:
     text = f.read()
 
 print("text is in RAM")
