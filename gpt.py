@@ -77,6 +77,18 @@ parser.add_argument(
     default=500,
     help="Number of tokens to generate.",
 )
+parser.add_argument(
+    "--lookahead-depth",
+    type=int,
+    default=1,
+    help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.",
+)
+parser.add_argument(
+    "--lookahead-width",
+    type=int,
+    default=4,
+    help="Branching factor at each level of the lookahead tree (top-K candidates).",
+)
 args = parser.parse_args()
 
 torch.manual_seed(1337)
@@ -223,6 +235,37 @@ class GPTLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)  # (B, T+1)
         return idx
 
+    @torch.no_grad()
+    def generate_lookahead(self, idx, max_new_tokens, depth=2, width=4):
+        # At each step, expand a depth-`depth` tree with branching factor
+        # `width`, then sample one full path proportional to its joint
+        # probability and commit all of its tokens at once. Top-1-greedy at
+        # each token can miss high-joint-probability sequences; the tree
+        # lets a low-prob first token survive if its continuation is strong.
+        assert idx.size(0) == 1, "lookahead generate only supports batch size 1"
+        remaining = max_new_tokens
+        while remaining > 0:
+            commit = min(depth, remaining)
+            leaves = idx  # (n_leaves, T), starts as (1, T)
+            log_probs = torch.zeros(1, device=idx.device)  # joint log-prob per leaf
+            for _ in range(commit):
+                logits, _ = self(leaves[:, -block_size:])
+                step_logp = F.log_softmax(logits[:, -1, :], dim=-1)  # (n_leaves, V)
+                k = min(width, step_logp.size(-1))
+                top_logp, top_idx = step_logp.topk(k, dim=-1)  # (n_leaves, k)
+                leaves = torch.cat(
+                    [leaves.repeat_interleave(k, dim=0), top_idx.reshape(-1, 1)],
+                    dim=1,
+                )
+                log_probs = log_probs.repeat_interleave(k) + top_logp.reshape(-1)
+            # softmax over joint log-probs => sample a leaf in proportion to its
+            # joint probability (relative to the other leaves in this tree)
+            path_probs = F.softmax(log_probs, dim=-1)
+            chosen = torch.multinomial(path_probs, num_samples=1)
+            idx = torch.cat([idx, leaves[chosen, -commit:]], dim=1)
+            remaining -= commit
+        return idx
+
 
 if args.infer is not None:
     print(f"loading checkpoint from {args.infer}")
@@ -259,7 +302,19 @@ if args.infer is not None:
     model.load_state_dict(ckpt["model"])
     model.eval()
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decode(m.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+    if args.lookahead_depth > 1:
+        print(
+            f"  lookahead sampling: depth={args.lookahead_depth} width={args.lookahead_width}"
+        )
+        out = m.generate_lookahead(
+            context,
+            max_new_tokens=args.max_new_tokens,
+            depth=args.lookahead_depth,
+            width=args.lookahead_width,
+        )
+    else:
+        out = m.generate(context, max_new_tokens=args.max_new_tokens)
+    print(decode(out[0].tolist()))
 else:
     hp = PROFILES[ACTIVE_PROFILE]
     print(f"Using profile '{ACTIVE_PROFILE}': {hp.model_dump()}")
