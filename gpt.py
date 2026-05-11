@@ -189,10 +189,26 @@ if args.infer is not None:
             f"Checkpoint {args.infer} has no 'chars' field. "
             "Retrain with the updated script to embed the vocab in the checkpoint."
         )
+    if "hparams" not in ckpt:
+        raise ValueError(
+            f"Checkpoint {args.infer} has no 'hparams' field. "
+            "Retrain with the updated script to embed the architecture hyperparameters."
+        )
     chars = ckpt["chars"]
     vocab_size = len(chars)
     itos = {i: ch for i, ch in enumerate(chars)}
     decode = lambda l: "".join([itos[i] for i in l])
+
+    hp = ckpt["hparams"]
+    n_embd = hp["n_embd"]
+    n_head = hp["n_head"]
+    n_layer = hp["n_layer"]
+    block_size = hp["block_size"]
+    dropout = hp["dropout"]
+    print(
+        f"  architecture: n_embd={n_embd} n_head={n_head} n_layer={n_layer} "
+        f"block_size={block_size} dropout={dropout}"
+    )
 
     model = GPTLanguageModel()
     m = model.to(device)
@@ -286,6 +302,13 @@ else:
                     "train_loss": losses["train"].item(),
                     "val_loss": losses["val"].item(),
                     "chars": chars,
+                    "hparams": {
+                        "n_embd": n_embd,
+                        "n_head": n_head,
+                        "n_layer": n_layer,
+                        "block_size": block_size,
+                        "dropout": dropout,
+                    },
                 },
                 ckpt_path,
             )
