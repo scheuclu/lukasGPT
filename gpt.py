@@ -265,7 +265,6 @@ def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLangu
 
 def _main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    assert device == "cuda"
     checkpoint_dir = "checkpoints"
 
     parser = argparse.ArgumentParser()
@@ -305,6 +304,7 @@ def _main():
         print(decode(out[0].tolist()))
         return
 
+    assert device == "cuda", "training requires CUDA"
     hp = PROFILES[ACTIVE_PROFILE]
     print(f"Using profile '{ACTIVE_PROFILE}': {hp.model_dump()}")
 
