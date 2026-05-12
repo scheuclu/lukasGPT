@@ -1,0 +1,41 @@
+{
+  "_doc": "Manifest of published checkpoints. The downloader reads `checkpoints` and writes files to ./checkpoints/. URLs assume hosting at huggingface.co/scheuclu/ng-video-lecture-checkpoints; replace if you re-host. See README's 'Pretrained checkpoints' section.",
+  "checkpoints": [
+    {
+      "step": 0,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_00000_8efb7fa.pt",
+      "sha256": "9953a4e47241a967726922b5f9822f6c19273292912af38b46511ce8a270dd8a"
+    },
+    {
+      "step": 100,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_00100_8efb7fa.pt",
+      "sha256": "eef4c86bfa288f57f91e49cecab48473b71fddedb55a24f53d395b1bab7ad8f8"
+    },
+    {
+      "step": 500,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_00500_8efb7fa.pt",
+      "sha256": "14d86184601e03eeae8456a8b5f7b4db565e7b1945f42dc49b6551e22749091a"
+    },
+    {
+      "step": 1000,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_01000_8efb7fa.pt",
+      "sha256": "11ba593d3e813965a083386aaa2080f427e2d20de9593a47470da898b3ec8f6a"
+    },
+    {
+      "step": 2000,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_02000_8efb7fa.pt",
+      "sha256": "bd29afc8eb2b9419aa8be678254da07a88ae25cc54b36e0be772d8da3522afe9"
+    },
+    {
+      "step": 4999,
+      "git_sha": "8efb7fa",
+      "url": "https://huggingface.co/scheuclu/ng-video-lecture-checkpoints/resolve/main/ckpt_step_04999_8efb7fa.pt",
+      "sha256": "e7249d19be35b1b6c77c05647c198f502a77bc8c97beb05ca4ddfb72b4219608"
+    }
+  ]
+}

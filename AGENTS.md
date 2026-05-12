@@ -16,6 +16,7 @@ A hand-extended fork of Karpathy's `ng-video-lecture` — a character-level tran
 
 | What | How |
 |------|-----|
+| Get pretrained checkpoints | `uv run python download_checkpoints.py` |
 | Train | `uv run python gpt.py` |
 | Infer | `uv run python gpt.py --infer <ckpt> --max-new-tokens 500` |
 | Infer + lookahead | `uv run python gpt.py --infer <ckpt> --lookahead-depth 3 --lookahead-width 4` |
@@ -27,6 +28,7 @@ A hand-extended fork of Karpathy's `ng-video-lecture` — a character-level tran
 - `bigram.py` — tiny bigram baseline; left as-is for reference, do not refactor unless asked.
 - `viz_embeddings.py` — Streamlit dashboard. Reads checkpoints directly via `torch.load`; does not import from `gpt.py`.
 - `checkpoints/ckpt_step_*.pt` — self-contained: every checkpoint stores `model`, `chars`, and `hparams`.
+- `checkpoints.json` — manifest of published checkpoints (step → URL + sha256). `download_checkpoints.py` reads it; it's the only thing about checkpoints kept in git.
 
 ## Conventions
 
@@ -45,7 +47,7 @@ A hand-extended fork of Karpathy's `ng-video-lecture` — a character-level tran
 
 ## Things not to touch
 
-- **`checkpoints/`** is gitignored but contains hours of training. Never `rm`, never `git clean -fdx`, never overwrite. If a checkpoint seems stale or wrong, ask before deleting.
+- **`checkpoints/`** is gitignored but contains hours of training. Never `rm`, never `git clean -fdx`, never overwrite. If a checkpoint seems stale or wrong, ask before deleting. Published checkpoints are recoverable via `download_checkpoints.py`, but local-only ones are not.
 - **`input.txt` / `input_shakespeare.txt`** are gitignored data files. Auto-downloaded if missing, but don't delete them casually — re-downloading is slow.
 - **`viz/`** is gitignored; if it exists it's stale output from an earlier non-Streamlit prototype. Safe to ignore, ask before deleting.
 
