@@ -6,15 +6,15 @@ Code from Karpathy's [Neural Networks: Zero To Hero](https://karpathy.ai/zero-to
 ## Quickstart
 
 ```bash
-uv sync                                       # install deps (Python ≥ 3.13)
-uv run python download_checkpoints.py         # pull pretrained checkpoints (~474 MB)
-uv run python gpt.py --infer checkpoints/ckpt_step_04999.pt   # generate text
+uv sync                                                    # install deps (Python ≥ 3.13)
+uv run python download_checkpoints.py                      # pull pretrained checkpoints (~474 MB)
+uv run python gpt.py --infer checkpoints/ckpt_default_step_04999.pt   # generate text
 ```
 
 To train your own instead (CUDA required):
 
 ```bash
-uv run python gpt.py                          # writes ./checkpoints/ckpt_step_*.pt
+uv run python gpt.py                          # writes ./checkpoints/ckpt_<profile>_step_*.pt
 ```
 
 At the end of training the final checkpoint is auto-uploaded to the HF Hub repo listed in `checkpoints.json` and tagged with the current git SHA (`ckpt_step_<step>_<sha>.pt`). A `dirty` suffix is appended if the working tree has uncommitted changes. Disable with `--no-upload`, or override the destination with `--upload-repo <user>/<repo>`. The script prints a JSON snippet you can paste into `checkpoints.json` to publish the upload.
@@ -24,9 +24,9 @@ At the end of training the final checkpoint is auto-uploaded to the HF Hub repo 
 The repo stays small; checkpoints live externally and are pinned by the git SHA of the training code. `checkpoints.json` is the manifest (step → URL + sha256), and `download_checkpoints.py` fetches them.
 
 ```bash
-uv run python download_checkpoints.py            # download all
-uv run python download_checkpoints.py --step 4999  # download just one
-uv run python download_checkpoints.py --list       # show what's available
+uv run python download_checkpoints.py                                # download all
+uv run python download_checkpoints.py --profile default --step 4999  # download one
+uv run python download_checkpoints.py --list                         # show what's available
 ```
 
 Downloads verify sha256 and skip files that are already present.
@@ -86,12 +86,14 @@ uv run hf auth login
 # create the model repo (one-time)
 uv run hf repo create ng-video-lecture-checkpoints --type model
 
-# copy & rename with the current git SHA so files are pinned to the training code
+# copy & rename with profile + current git SHA so files are pinned to the training code
 GIT_SHA=$(git rev-parse --short HEAD)
+PROFILE=default
 mkdir -p upload
 for step in 0 100 500 1000 2000 4999; do
-  cp checkpoints/ckpt_step_$(printf "%05d" $step).pt \
-     upload/ckpt_step_$(printf "%05d" $step)_${GIT_SHA}.pt
+  s=$(printf "%05d" $step)
+  cp "checkpoints/ckpt_${PROFILE}_step_${s}.pt" \
+     "upload/ckpt_${PROFILE}_step_${s}_${GIT_SHA}.pt"
 done
 
 # upload

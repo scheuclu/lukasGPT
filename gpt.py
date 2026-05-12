@@ -283,12 +283,13 @@ def _manifest_repo() -> str | None:
         return None
 
 
-def upload_checkpoint(local_path: str, step: int, git_sha: str, repo: str) -> str:
+def upload_checkpoint(local_path: str, profile: str, step: int,
+                      git_sha: str, repo: str) -> str:
     """Upload `local_path` to the given HF Hub model repo, renaming the
-    remote file to `ckpt_step_<step>_<sha>.pt`. Creates the repo if it
-    doesn't exist. Returns the remote filename on success."""
+    remote file to `ckpt_<profile>_step_<step>_<sha>.pt`. Creates the
+    repo if it doesn't exist. Returns the remote filename on success."""
     from huggingface_hub import create_repo, upload_file
-    remote = f"ckpt_step_{step:05d}_{git_sha}.pt"
+    remote = f"ckpt_{profile}_step_{step:05d}_{git_sha}.pt"
     create_repo(repo, repo_type="model", exist_ok=True)
     upload_file(
         path_or_fileobj=local_path,
@@ -434,10 +435,14 @@ def _main():
             print(
                 f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
             )
-            ckpt_path = os.path.join(checkpoint_dir, f"ckpt_step_{iter:05d}.pt")
+            ckpt_path = os.path.join(
+                checkpoint_dir,
+                f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
+            )
             torch.save(
                 {
                     "iter": iter,
+                    "profile": ACTIVE_PROFILE,
                     "model": model.state_dict(),
                     "train_loss": losses["train"].item(),
                     "val_loss": losses["val"].item(),
@@ -463,7 +468,10 @@ def _main():
     repo = args.upload_repo or _manifest_repo()
     sha = _git_sha()
     final_step = hp.max_iters - 1
-    final_ckpt = os.path.join(checkpoint_dir, f"ckpt_step_{final_step:05d}.pt")
+    final_ckpt = os.path.join(
+        checkpoint_dir,
+        f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}.pt",
+    )
     if not repo:
         print("upload: skipped (no repo configured; use --upload-repo or set `repo` in checkpoints.json)")
         return
@@ -474,19 +482,20 @@ def _main():
         print(f"upload: skipped ({final_ckpt} not found)")
         return
 
-    print(f"upload: pushing {final_ckpt} to {repo} (sha={sha})")
+    print(f"upload: pushing {final_ckpt} to {repo} (profile={ACTIVE_PROFILE}, sha={sha})")
     try:
-        remote = upload_checkpoint(final_ckpt, final_step, sha, repo)
+        remote = upload_checkpoint(final_ckpt, ACTIVE_PROFILE, final_step, sha, repo)
     except Exception as e:
+        fallback = f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}_{sha}.pt"
         print(f"upload: FAILED ({type(e).__name__}: {e})")
-        print("  rerun later with: uv run hf upload "
-              f"{repo} {final_ckpt} ckpt_step_{final_step:05d}_{sha}.pt")
+        print(f"  rerun later with: uv run hf upload {repo} {final_ckpt} {fallback}")
         return
     sha256 = _sha256_file(final_ckpt)
     print(f"upload: ok → {repo}/{remote}")
     print()
     print("Manifest snippet — paste into checkpoints.json under `checkpoints`:")
     print(json.dumps({
+        "profile": ACTIVE_PROFILE,
         "step": final_step,
         "git_sha": sha,
         "filename": remote,
