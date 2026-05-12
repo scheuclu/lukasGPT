@@ -75,14 +75,14 @@ The sidebar lets you scrub across training-step checkpoints and watch the embedd
 
 ## Publishing new checkpoints (maintainers)
 
-Checkpoints are hosted on a Hugging Face Hub model repo. `huggingface_hub` is already a regular dep, so its CLI is available via `uv run`. To publish a fresh batch:
+Checkpoints are hosted on a Hugging Face Hub model repo. `huggingface_hub` is already a regular dep, so its `hf` CLI is available via `uv run`. To publish a fresh batch:
 
 ```bash
 # one-time: authenticate
-uv run huggingface-cli login
+uv run hf auth login
 
 # create the model repo (one-time)
-uv run huggingface-cli repo create ng-video-lecture-checkpoints --type model
+uv run hf repo create ng-video-lecture-checkpoints --type model
 
 # copy & rename with the current git SHA so files are pinned to the training code
 GIT_SHA=$(git rev-parse --short HEAD)
@@ -93,7 +93,7 @@ for step in 0 100 500 1000 2000 4999; do
 done
 
 # upload
-uv run huggingface-cli upload scheuclu/ng-video-lecture-checkpoints ./upload .
+uv run hf upload scheuclu/ng-video-lecture-checkpoints ./upload .
 
 # then edit checkpoints.json: bump filenames + sha256s for each step
 ```
