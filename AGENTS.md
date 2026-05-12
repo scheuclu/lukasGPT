@@ -25,6 +25,7 @@ A hand-extended fork of Karpathy's `ng-video-lecture` — a character-level tran
 ## Code layout
 
 - `gpt.py` — single-file transformer (model + training loop + inference). All hyperparameters live in the `Hyperparameters` Pydantic model and named `PROFILES` dict near the top.
+- `datasets/` — local package (not the HF `datasets` library) holding one module per training corpus. Each module subclasses `Dataset` from `datasets/base.py`, declaring `name`, `url`, `default_path`, and optionally a `postprocess(raw) -> text` method. Add a new corpus by creating the module and importing it in `datasets/__init__.py`.
 - `bigram.py` — tiny bigram baseline; left as-is for reference, do not refactor unless asked.
 - `viz_embeddings.py` — Streamlit dashboard. Reads checkpoints directly via `torch.load`; does not import from `gpt.py`.
 - `checkpoints/ckpt_step_*.pt` — self-contained: every checkpoint stores `model`, `chars`, and `hparams`.

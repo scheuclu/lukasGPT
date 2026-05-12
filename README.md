@@ -14,8 +14,11 @@ uv run python gpt.py --infer checkpoints/ckpt_default_step_04999.pt   # generate
 To train your own instead (CUDA required):
 
 ```bash
-uv run python gpt.py                          # writes ./checkpoints/ckpt_<profile>_step_*.pt
+uv run python gpt.py                              # default dataset: tinystories (~1.9 GB)
+uv run python gpt.py --dataset shakespeare        # tiny corpus for quick experiments
 ```
+
+Writes `./checkpoints/ckpt_<profile>_step_*.pt`. See `datasets/` for available corpora — each is a small subclass with its URL, local cache path, and (optionally) a `postprocess` method for cleaning the raw download.
 
 At the end of training the final checkpoint is auto-uploaded to the HF Hub repo listed in `checkpoints.json` and tagged with the current git SHA (`ckpt_step_<step>_<sha>.pt`). A `dirty` suffix is appended if the working tree has uncommitted changes. Disable with `--no-upload`, or override the destination with `--upload-repo <user>/<repo>`. The script prints a JSON snippet you can paste into `checkpoints.json` to publish the upload.
 
