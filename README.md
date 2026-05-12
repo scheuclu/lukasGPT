@@ -1,10 +1,62 @@
 
 # nanogpt-lecture
 
-Code created in the [Neural Networks: Zero To Hero](https://karpathy.ai/zero-to-hero.html) video lecture series, specifically on the first lecture on nanoGPT. Publishing here as a Github repo so people can easily hack it, walk through the `git log` history of it, etc.
+Code from Karpathy's [Neural Networks: Zero To Hero](https://karpathy.ai/zero-to-hero.html) lecture series, specifically the first lecture on nanoGPT. This fork extends the original with a few extras: Pydantic hyperparameter profiles, checkpoints that carry their own architecture + vocab, depth-N lookahead sampling at inference time, and a Streamlit dashboard for exploring the learned embeddings.
 
-NOTE: sadly I did not go too much into model initialization in the video lecture, but it is quite important for good performance. The current code will train and work fine, but its convergence is slower because it starts off in a not great spot in the weight space. Please see [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py) for `# init all weights` comment, and especially how it calls the `_init_weights` function. Even more sadly, the code in this repo is a bit different in how it names and stores the various modules, so it's not possible to directly copy paste this code here. My current plan is to publish a supplementary video lecture and cover these parts, then I will also push the exact code changes to this repo. For now I'm keeping it as is so it is almost exactly what we actually covered in the video.
+## Quickstart
 
-### License
+```bash
+uv sync                       # install deps (Python ≥ 3.13, CUDA assumed)
+uv run python gpt.py          # train; writes ./checkpoints/ckpt_step_*.pt
+```
+
+## Training
+
+`gpt.py` trains a character-level transformer on `input.txt` (auto-downloaded). Architecture, training schedule, and dropout are bundled into named `Hyperparameters` profiles at the top of `gpt.py`:
+
+- `default` — n_embd 384, 6 layers, 6 heads, block_size 512, 5000 iters
+- `tiny` — small enough to iterate on CPU-class setups
+- `large` — 12 layers, 12 heads, block_size 1024
+
+Switch profiles by editing `ACTIVE_PROFILE` in `gpt.py`. Each checkpoint embeds the architecture and vocab so it's self-contained for inference.
+
+## Inference
+
+```bash
+uv run python gpt.py --infer checkpoints/ckpt_step_04999.pt --max-new-tokens 500
+```
+
+Add lookahead sampling to sample by joint probability over a depth-N beam tree:
+
+```bash
+uv run python gpt.py --infer <ckpt> --lookahead-depth 3 --lookahead-width 4
+```
+
+## Visualizing learned embeddings
+
+```bash
+uv run streamlit run viz_embeddings.py
+```
+
+Opens an interactive dashboard with:
+
+- 3D / 2D PCA scatter of the token embedding table (colored by character category)
+- Cosine-similarity heatmap between every pair of token embeddings
+- 3D / 2D PCA of the position embedding table (colored by position index)
+
+The sidebar lets you scrub across training-step checkpoints and watch the embeddings organize over time.
+
+## Layout
+
+- `gpt.py` — the transformer, training loop, inference, and lookahead sampling
+- `bigram.py` — the tiny bigram baseline from earlier in the lecture
+- `viz_embeddings.py` — Streamlit embedding viewer
+- `checkpoints/` — training checkpoints (gitignored)
+
+## Notes from Karpathy's original README
+
+Sadly the video lecture did not go too deep into model initialization, which is quite important for good performance. The code in this repo will train fine, but its convergence is slower because it starts off in a not-great spot in the weight space. See [nanoGPT model.py](https://github.com/karpathy/nanoGPT/blob/master/model.py)'s `_init_weights` for the canonical version.
+
+## License
 
 MIT
