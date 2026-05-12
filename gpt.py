@@ -60,44 +60,11 @@ PROFILES: dict[str, Hyperparameters] = {
 
 ACTIVE_PROFILE = "default"
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-assert device == "cuda"
-checkpoint_dir = "checkpoints"
-
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--infer",
-    type=str,
-    default=None,
-    help="Path to a checkpoint .pt file. If set, skip training and just generate text.",
-)
-parser.add_argument(
-    "--max-new-tokens",
-    type=int,
-    default=500,
-    help="Number of tokens to generate.",
-)
-parser.add_argument(
-    "--lookahead-depth",
-    type=int,
-    default=1,
-    help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.",
-)
-parser.add_argument(
-    "--lookahead-width",
-    type=int,
-    default=4,
-    help="Branching factor at each level of the lookahead tree (top-K candidates).",
-)
-args = parser.parse_args()
-
-torch.manual_seed(1337)
-
 
 class Head(nn.Module):
     """one head of self-attention"""
 
-    def __init__(self, head_size):
+    def __init__(self, n_embd, head_size, block_size, dropout):
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
@@ -128,9 +95,11 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     """multiple heads of self-attention in parallel"""
 
-    def __init__(self, num_heads, head_size):
+    def __init__(self, n_embd, num_heads, head_size, block_size, dropout):
         super().__init__()
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList(
+            [Head(n_embd, head_size, block_size, dropout) for _ in range(num_heads)]
+        )
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
@@ -143,7 +112,7 @@ class MultiHeadAttention(nn.Module):
 class FeedFoward(nn.Module):
     """a simple linear layer followed by a non-linearity"""
 
-    def __init__(self, n_embd):
+    def __init__(self, n_embd, dropout):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
@@ -159,12 +128,11 @@ class FeedFoward(nn.Module):
 class Block(nn.Module):
     """Transformer block: communication followed by computation"""
 
-    def __init__(self, n_embd, n_head):
-        # n_embd: embedding dimension, n_head: the number of heads we'd like
+    def __init__(self, n_embd, n_head, block_size, dropout):
         super().__init__()
         head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size)
-        self.ffwd = FeedFoward(n_embd)
+        self.sa = MultiHeadAttention(n_embd, n_head, head_size, block_size, dropout)
+        self.ffwd = FeedFoward(n_embd, dropout)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
@@ -175,18 +143,20 @@ class Block(nn.Module):
 
 
 class GPTLanguageModel(nn.Module):
-    def __init__(self):
+    def __init__(self, hp: Hyperparameters, vocab_size: int):
         super().__init__()
-        # each token directly reads off the logits for the next token from a lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
-        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.hp = hp
+        self.vocab_size = vocab_size
+        self.token_embedding_table = nn.Embedding(vocab_size, hp.n_embd)
+        self.position_embedding_table = nn.Embedding(hp.block_size, hp.n_embd)
         self.blocks = nn.Sequential(
-            *[Block(n_embd, n_head=n_head) for _ in range(n_layer)]
+            *[Block(hp.n_embd, hp.n_head, hp.block_size, hp.dropout)
+              for _ in range(hp.n_layer)]
         )
-        self.ln_f = nn.LayerNorm(n_embd)  # final layer norm
-        self.lm_head = nn.Linear(n_embd, vocab_size)
+        self.ln_f = nn.LayerNorm(hp.n_embd)
+        self.lm_head = nn.Linear(hp.n_embd, vocab_size)
 
-        # better init, not covered in the original GPT video, but important, will cover in followup video
+        # better init, not covered in the original GPT video, but important
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -199,8 +169,8 @@ class GPTLanguageModel(nn.Module):
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
+        device = idx.device
 
-        # idx and targets are both (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx)  # (B,T,C)
         pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T,C)
         x = tok_emb + pos_emb  # (B,T,C)
@@ -218,48 +188,60 @@ class GPTLanguageModel(nn.Module):
 
         return logits, loss
 
+    @torch.no_grad()
+    def residuals(self, idx):
+        """Run a forward pass and return the residual stream at every layer.
+
+        Returns a list of (B, T, n_embd) tensors:
+          [0]            after tok+pos embedding (pre-block input)
+          [1..n_layer]   after each transformer block
+          [n_layer+1]    after the final layer norm
+        """
+        B, T = idx.shape
+        device = idx.device
+        tok_emb = self.token_embedding_table(idx)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device))
+        x = tok_emb + pos_emb
+        out = [x]
+        for block in self.blocks:
+            x = block(x)
+            out.append(x)
+        out.append(self.ln_f(x))
+        return out
+
     def generate(self, idx, max_new_tokens):
-        # idx is (B, T) array of indices in the current context
+        block_size = self.hp.block_size
         for _ in range(max_new_tokens):
-            # crop idx to the last block_size tokens
             idx_cond = idx[:, -block_size:]
-            # get the predictions
             logits, loss = self(idx_cond)
-            # focus only on the last time step
-            logits = logits[:, -1, :]  # becomes (B, C)
-            # apply softmax to get probabilities
-            probs = F.softmax(logits, dim=-1)  # (B, C)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)  # (B, 1)
-            # append sampled index to the running sequence
-            idx = torch.cat((idx, idx_next), dim=1)  # (B, T+1)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
     @torch.no_grad()
     def generate_lookahead(self, idx, max_new_tokens, depth=2, width=4):
         # At each step, expand a depth-`depth` tree with branching factor
         # `width`, then sample one full path proportional to its joint
-        # probability and commit all of its tokens at once. Top-1-greedy at
-        # each token can miss high-joint-probability sequences; the tree
-        # lets a low-prob first token survive if its continuation is strong.
+        # probability and commit all of its tokens at once.
         assert idx.size(0) == 1, "lookahead generate only supports batch size 1"
+        block_size = self.hp.block_size
         remaining = max_new_tokens
         while remaining > 0:
             commit = min(depth, remaining)
-            leaves = idx  # (n_leaves, T), starts as (1, T)
-            log_probs = torch.zeros(1, device=idx.device)  # joint log-prob per leaf
+            leaves = idx
+            log_probs = torch.zeros(1, device=idx.device)
             for _ in range(commit):
                 logits, _ = self(leaves[:, -block_size:])
-                step_logp = F.log_softmax(logits[:, -1, :], dim=-1)  # (n_leaves, V)
+                step_logp = F.log_softmax(logits[:, -1, :], dim=-1)
                 k = min(width, step_logp.size(-1))
-                top_logp, top_idx = step_logp.topk(k, dim=-1)  # (n_leaves, k)
+                top_logp, top_idx = step_logp.topk(k, dim=-1)
                 leaves = torch.cat(
                     [leaves.repeat_interleave(k, dim=0), top_idx.reshape(-1, 1)],
                     dim=1,
                 )
                 log_probs = log_probs.repeat_interleave(k) + top_logp.reshape(-1)
-            # softmax over joint log-probs => sample a leaf in proportion to its
-            # joint probability (relative to the other leaves in this tree)
             path_probs = F.softmax(log_probs, dim=-1)
             chosen = torch.multinomial(path_probs, num_samples=1)
             idx = torch.cat([idx, leaves[chosen, -commit:]], dim=1)
@@ -267,67 +249,64 @@ class GPTLanguageModel(nn.Module):
         return idx
 
 
-if args.infer is not None:
-    print(f"loading checkpoint from {args.infer}")
-    ckpt = torch.load(args.infer, map_location=device)
-    if "chars" not in ckpt:
-        raise ValueError(
-            f"Checkpoint {args.infer} has no 'chars' field. "
-            "Retrain with the updated script to embed the vocab in the checkpoint."
-        )
-    if "hparams" not in ckpt:
-        raise ValueError(
-            f"Checkpoint {args.infer} has no 'hparams' field. "
-            "Retrain with the updated script to embed the architecture hyperparameters."
-        )
+def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
+    """Load a checkpoint and return (model, chars, hp). Used by both the
+    inference CLI in __main__ and external tools like viz_embeddings.py."""
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    if "chars" not in ckpt or "hparams" not in ckpt:
+        raise ValueError(f"checkpoint {path} missing 'chars' or 'hparams'")
     chars = ckpt["chars"]
-    vocab_size = len(chars)
-    itos = {i: ch for i, ch in enumerate(chars)}
-    decode = lambda l: "".join([itos[i] for i in l])
-
     hp = Hyperparameters(**ckpt["hparams"])
-    n_embd = hp.n_embd
-    n_head = hp.n_head
-    n_layer = hp.n_layer
-    block_size = hp.block_size
-    dropout = hp.dropout
-    print(
-        f"  architecture: n_embd={n_embd} n_head={n_head} n_layer={n_layer} "
-        f"block_size={block_size} dropout={dropout}"
-    )
-
-    model = GPTLanguageModel()
-    m = model.to(device)
-    print(sum(p.numel() for p in m.parameters()) / 1e6, "M parameters")
+    model = GPTLanguageModel(hp, vocab_size=len(chars)).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
-    context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    if args.lookahead_depth > 1:
+    return model, chars, hp
+
+
+def _main():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    assert device == "cuda"
+    checkpoint_dir = "checkpoints"
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--infer", type=str, default=None,
+                        help="Path to a checkpoint .pt file. If set, skip training and just generate text.")
+    parser.add_argument("--max-new-tokens", type=int, default=500,
+                        help="Number of tokens to generate.")
+    parser.add_argument("--lookahead-depth", type=int, default=1,
+                        help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.")
+    parser.add_argument("--lookahead-width", type=int, default=4,
+                        help="Branching factor at each level of the lookahead tree (top-K candidates).")
+    args = parser.parse_args()
+
+    torch.manual_seed(1337)
+
+    if args.infer is not None:
+        print(f"loading checkpoint from {args.infer}")
+        model, chars, hp = load_model_from_checkpoint(args.infer, device=device)
+        itos = {i: ch for i, ch in enumerate(chars)}
+        decode = lambda l: "".join([itos[i] for i in l])
         print(
-            f"  lookahead sampling: depth={args.lookahead_depth} width={args.lookahead_width}"
+            f"  architecture: n_embd={hp.n_embd} n_head={hp.n_head} n_layer={hp.n_layer} "
+            f"block_size={hp.block_size} dropout={hp.dropout}"
         )
-        out = m.generate_lookahead(
-            context,
-            max_new_tokens=args.max_new_tokens,
-            depth=args.lookahead_depth,
-            width=args.lookahead_width,
-        )
-    else:
-        out = m.generate(context, max_new_tokens=args.max_new_tokens)
-    print(decode(out[0].tolist()))
-else:
+        print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
+        context = torch.zeros((1, 1), dtype=torch.long, device=device)
+        if args.lookahead_depth > 1:
+            print(f"  lookahead sampling: depth={args.lookahead_depth} width={args.lookahead_width}")
+            out = model.generate_lookahead(
+                context,
+                max_new_tokens=args.max_new_tokens,
+                depth=args.lookahead_depth,
+                width=args.lookahead_width,
+            )
+        else:
+            out = model.generate(context, max_new_tokens=args.max_new_tokens)
+        print(decode(out[0].tolist()))
+        return
+
     hp = PROFILES[ACTIVE_PROFILE]
     print(f"Using profile '{ACTIVE_PROFILE}': {hp.model_dump()}")
-    n_embd = hp.n_embd
-    n_head = hp.n_head
-    n_layer = hp.n_layer
-    block_size = hp.block_size
-    dropout = hp.dropout
-    batch_size = hp.batch_size
-    max_iters = hp.max_iters
-    eval_interval = hp.eval_interval
-    eval_iters = hp.eval_iters
-    learning_rate = hp.learning_rate
 
     INPUT_PATH = "input.txt"
     INPUT_URL = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories-train.txt"
@@ -362,18 +341,16 @@ else:
     encode = lambda s: [stoi[c] for c in s]
     decode = lambda l: "".join([itos[i] for i in l])
 
-    # Train and test splits
     data = torch.tensor(encode(text), dtype=torch.long)
-    n = int(0.9 * len(data))  # first 90% will be train, rest val
+    n = int(0.9 * len(data))
     train_data = data[:n]
     val_data = data[n:]
 
     def get_batch(split):
-        # generate a small batch of data of inputs x and targets y
-        data = train_data if split == "train" else val_data
-        ix = torch.randint(len(data) - block_size, (batch_size,))
-        x = torch.stack([data[i : i + block_size] for i in ix])
-        y = torch.stack([data[i + 1 : i + block_size + 1] for i in ix])
+        d = train_data if split == "train" else val_data
+        ix = torch.randint(len(d) - hp.block_size, (hp.batch_size,))
+        x = torch.stack([d[i : i + hp.block_size] for i in ix])
+        y = torch.stack([d[i + 1 : i + hp.block_size + 1] for i in ix])
         x, y = x.to(device), y.to(device)
         return x, y
 
@@ -382,8 +359,8 @@ else:
         out = {}
         model.eval()
         for split in ["train", "val"]:
-            losses = torch.zeros(eval_iters)
-            for k in range(eval_iters):
+            losses = torch.zeros(hp.eval_iters)
+            for k in range(hp.eval_iters):
                 X, Y = get_batch(split)
                 logits, loss = model(X, Y)
                 losses[k] = loss.item()
@@ -391,16 +368,14 @@ else:
         model.train()
         return out
 
-    model = GPTLanguageModel()
-    m = model.to(device)
-    print(sum(p.numel() for p in m.parameters()) / 1e6, "M parameters")
+    model = GPTLanguageModel(hp, vocab_size).to(device)
+    print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
 
     os.makedirs(checkpoint_dir, exist_ok=True)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=hp.learning_rate)
 
-    for iter in range(max_iters):
-        # every once in a while evaluate the loss on train and val sets and save a checkpoint
-        if iter % eval_interval == 0 or iter == max_iters - 1:
+    for iter in range(hp.max_iters):
+        if iter % hp.eval_interval == 0 or iter == hp.max_iters - 1:
             losses = estimate_loss()
             print(
                 f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
@@ -419,15 +394,15 @@ else:
             )
             print(f"  saved checkpoint to {ckpt_path}")
 
-        # sample a batch of data
         xb, yb = get_batch("train")
-
-        # evaluate the loss
         logits, loss = model(xb, yb)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
 
-    # generate from the model
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decode(m.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+    print(decode(model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+
+
+if __name__ == "__main__":
+    _main()
