@@ -1,5 +1,8 @@
 import argparse
+import hashlib
+import json
 import os
+import subprocess
 
 import torch
 import torch.nn as nn
@@ -249,6 +252,53 @@ class GPTLanguageModel(nn.Module):
         return idx
 
 
+def _git_sha() -> str | None:
+    """Short HEAD SHA with `-dirty` suffix if there are uncommitted changes."""
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        return None
+    if subprocess.run(["git", "diff", "--quiet"], stderr=subprocess.DEVNULL).returncode:
+        sha = f"{sha}-dirty"
+    return sha
+
+
+def _sha256_file(path: str, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for buf in iter(lambda: f.read(chunk), b""):
+            h.update(buf)
+    return h.hexdigest()
+
+
+def _manifest_repo() -> str | None:
+    """Read the HF Hub repo from checkpoints.json if present."""
+    try:
+        with open("checkpoints.json") as f:
+            return json.load(f).get("repo")
+    except Exception:
+        return None
+
+
+def upload_checkpoint(local_path: str, step: int, git_sha: str, repo: str) -> str:
+    """Upload `local_path` to the given HF Hub model repo, renaming the
+    remote file to `ckpt_step_<step>_<sha>.pt`. Creates the repo if it
+    doesn't exist. Returns the remote filename on success."""
+    from huggingface_hub import create_repo, upload_file
+    remote = f"ckpt_step_{step:05d}_{git_sha}.pt"
+    create_repo(repo, repo_type="model", exist_ok=True)
+    upload_file(
+        path_or_fileobj=local_path,
+        path_in_repo=remote,
+        repo_id=repo,
+        repo_type="model",
+    )
+    return remote
+
+
 def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
     """Load a checkpoint and return (model, chars, hp). Used by both the
     inference CLI in __main__ and external tools like viz_embeddings.py."""
@@ -276,6 +326,10 @@ def _main():
                         help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.")
     parser.add_argument("--lookahead-width", type=int, default=4,
                         help="Branching factor at each level of the lookahead tree (top-K candidates).")
+    parser.add_argument("--no-upload", action="store_true",
+                        help="Skip auto-upload of the final checkpoint to HF Hub at end of training.")
+    parser.add_argument("--upload-repo", default=None,
+                        help="HF Hub model repo to upload to. Default: `repo` field in checkpoints.json.")
     args = parser.parse_args()
 
     torch.manual_seed(1337)
@@ -402,6 +456,42 @@ def _main():
 
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     print(decode(model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+
+    if args.no_upload:
+        return
+
+    repo = args.upload_repo or _manifest_repo()
+    sha = _git_sha()
+    final_step = hp.max_iters - 1
+    final_ckpt = os.path.join(checkpoint_dir, f"ckpt_step_{final_step:05d}.pt")
+    if not repo:
+        print("upload: skipped (no repo configured; use --upload-repo or set `repo` in checkpoints.json)")
+        return
+    if not sha:
+        print("upload: skipped (not in a git repo)")
+        return
+    if not os.path.exists(final_ckpt):
+        print(f"upload: skipped ({final_ckpt} not found)")
+        return
+
+    print(f"upload: pushing {final_ckpt} to {repo} (sha={sha})")
+    try:
+        remote = upload_checkpoint(final_ckpt, final_step, sha, repo)
+    except Exception as e:
+        print(f"upload: FAILED ({type(e).__name__}: {e})")
+        print("  rerun later with: uv run hf upload "
+              f"{repo} {final_ckpt} ckpt_step_{final_step:05d}_{sha}.pt")
+        return
+    sha256 = _sha256_file(final_ckpt)
+    print(f"upload: ok → {repo}/{remote}")
+    print()
+    print("Manifest snippet — paste into checkpoints.json under `checkpoints`:")
+    print(json.dumps({
+        "step": final_step,
+        "git_sha": sha,
+        "filename": remote,
+        "sha256": sha256,
+    }, indent=2))
 
 
 if __name__ == "__main__":

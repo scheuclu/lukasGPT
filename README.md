@@ -17,6 +17,8 @@ To train your own instead (CUDA required):
 uv run python gpt.py                          # writes ./checkpoints/ckpt_step_*.pt
 ```
 
+At the end of training the final checkpoint is auto-uploaded to the HF Hub repo listed in `checkpoints.json` and tagged with the current git SHA (`ckpt_step_<step>_<sha>.pt`). A `dirty` suffix is appended if the working tree has uncommitted changes. Disable with `--no-upload`, or override the destination with `--upload-repo <user>/<repo>`. The script prints a JSON snippet you can paste into `checkpoints.json` to publish the upload.
+
 ## Pretrained checkpoints
 
 The repo stays small; checkpoints live externally and are pinned by the git SHA of the training code. `checkpoints.json` is the manifest (step → URL + sha256), and `download_checkpoints.py` fetches them.
