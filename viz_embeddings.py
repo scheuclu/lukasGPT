@@ -94,6 +94,53 @@ def residuals_for_prompts(model, chars, device, prompts, layer_idx):
     return torch.stack(vecs), valid, skipped
 
 
+def prompt_similarity_heatmap(matrix: torch.Tensor, prompts: list[str],
+                              mode: str = "centered") -> go.Figure:
+    """Cosine-similarity heatmap.
+
+    mode="centered" subtracts the mean residual across prompts before
+    computing similarity. This removes the dominant shared "rogue
+    direction" that makes raw transformer residuals look uniformly
+    positive (anisotropy), revealing the relative structure.
+
+    mode="raw" computes cosine on the original vectors; mostly red since
+    residuals live in a narrow cone.
+
+    mode="autoscale" is raw cosine but with the color range stretched to
+    the off-diagonal min/max.
+    """
+    if mode == "centered":
+        m = matrix - matrix.mean(0, keepdim=True)
+    else:
+        m = matrix
+    w = torch.nn.functional.normalize(m, dim=1)
+    sim = (w @ w.T).cpu().numpy()
+
+    if mode == "autoscale":
+        n = sim.shape[0]
+        off = sim[~torch.eye(n, dtype=torch.bool).numpy()]
+        zmin, zmax = float(off.min()), float(off.max())
+    else:
+        zmin, zmax = -1.0, 1.0
+
+    short = [p if len(p) <= 24 else p[:22] + "…" for p in prompts]
+    hover = [[f"{prompts[i]!r}<br>↔ {prompts[j]!r}<br>cos={sim[i, j]:.3f}"
+              for j in range(len(prompts))] for i in range(len(prompts))]
+    fig = go.Figure(data=go.Heatmap(
+        z=sim, x=short, y=short,
+        zmin=zmin, zmax=zmax, zmid=0 if zmin < 0 < zmax else None,
+        colorscale="RdBu", reversescale=True,
+        hovertext=hover, hoverinfo="text",
+    ))
+    fig.update_layout(
+        template="plotly_white",
+        yaxis=dict(autorange="reversed", scaleanchor="x", scaleratio=1),
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=max(400, 40 * len(prompts) + 100),
+    )
+    return fig
+
+
 def prompt_scatter(coords: torch.Tensor, prompts: list[str]) -> go.Figure:
     hovers = [f"{p!r}" for p in prompts]
     short = [p if len(p) <= 20 else p[:18] + "…" for p in prompts]
@@ -349,6 +396,32 @@ with tab_resid:
                 "related (e.g. king/queen, brother/sister) ideally land near "
                 "each other — but remember this is a 10M-param char model "
                 "trained on ~1M chars, so the structure is weak and noisy."
+            )
+            st.markdown("##### Pairwise cosine similarity")
+            sim_mode = st.radio(
+                "color scale",
+                options=["centered", "raw", "autoscale"],
+                index=0, horizontal=True,
+                help=(
+                    "centered: subtract mean residual first (reveals real "
+                    "structure by removing transformer anisotropy). "
+                    "raw: cosine on original vectors, scale [-1, 1] — usually "
+                    "uniformly red because residuals live in a narrow cone. "
+                    "autoscale: raw cosine but color range stretched to the "
+                    "off-diagonal min/max."
+                ),
+            )
+            st.plotly_chart(
+                prompt_similarity_heatmap(mat, valid, mode=sim_mode),
+                use_container_width=True,
+            )
+            st.caption(
+                "Cosine similarity between the full residual vectors. "
+                "Red = aligned, blue = opposite, white = orthogonal. "
+                "Transformer residuals are anisotropic (they cluster in a "
+                "narrow cone), so the 'centered' mode is usually the most "
+                "informative — it shows differences relative to the average "
+                "prompt direction at this layer."
             )
         elif mat is not None:
             st.info("Need at least 2 valid prompts for PCA.")
