@@ -10,4 +10,5 @@ dependencies = [
     "plotly>=6.7.0",
     "numpy>=2.4.4",
     "streamlit>=1.57.0",
+    "huggingface-hub>=1.14.0",
 ]

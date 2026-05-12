@@ -27,7 +27,17 @@ CATEGORY_COLORS = {
 
 
 def list_checkpoints(ckpt_dir: str) -> list[str]:
-    return sorted(glob.glob(os.path.join(ckpt_dir, "ckpt_step_*.pt")))
+    return sorted(glob.glob(os.path.join(ckpt_dir, "ckpt_*.pt")))
+
+
+def _format_ckpt(path: str) -> str:
+    """Human-readable label for a checkpoint file. Supports both legacy
+    `ckpt_step_<step>.pt` and the current `ckpt_<profile>_step_<step>.pt`."""
+    name = os.path.basename(path).removeprefix("ckpt_").removesuffix(".pt")
+    if name.startswith("step_"):
+        return "step " + name.removeprefix("step_")
+    profile, _, rest = name.partition("_step_")
+    return f"{profile} · step {rest}"
 
 
 def char_category(c: str) -> str:
@@ -277,7 +287,7 @@ with st.sidebar:
         "step",
         options=ckpts,
         index=len(ckpts) - 1,
-        format_func=lambda p: os.path.basename(p).replace("ckpt_step_", "step ").replace(".pt", ""),
+        format_func=lambda p: _format_ckpt(p),
     )
 
     st.header("Display")
