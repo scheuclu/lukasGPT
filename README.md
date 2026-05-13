@@ -44,6 +44,22 @@ Downloads verify sha256 and skip files that are already present.
 
 Switch profiles by editing `ACTIVE_PROFILE` in `gpt.py`. Each checkpoint embeds the architecture and vocab so it's self-contained for inference.
 
+## Monitoring with TensorBoard
+
+Each training run writes scalar loss curves to `./runs/<timestamp>_<profile>_<dataset>/`. Disable with `--no-tensorboard` for quick test runs.
+
+```bash
+uv run tensorboard --logdir=runs
+```
+
+Opens at http://localhost:6006. To make it reachable from other machines on your Tailnet (or any LAN), bind to all interfaces:
+
+```bash
+uv run tensorboard --logdir=runs --bind_all
+```
+
+Then hit `http://<this-machine>:6006` from your phone/laptop over Tailscale.
+
 ## Inference
 
 ```bash
@@ -75,8 +91,10 @@ The sidebar lets you scrub across training-step checkpoints and watch the embedd
 - `gpt.py` — the transformer, training loop, inference, and lookahead sampling
 - `bigram.py` — the tiny bigram baseline from earlier in the lecture
 - `viz_embeddings.py` — Streamlit embedding viewer
+- `checkpoint_io.py` — shared helpers for checkpoint files (sha256, git SHA tag, HF Hub upload, manifest)
 - `checkpoints.json` + `download_checkpoints.py` — manifest and downloader for published checkpoints
 - `checkpoints/` — training checkpoints (gitignored; populated by training or by the downloader)
+- `runs/` — TensorBoard event files, one subdir per training run (gitignored)
 
 ## Publishing new checkpoints (maintainers)
 

@@ -2,11 +2,13 @@ import argparse
 import json
 import os
 from collections.abc import Callable, Iterable
+from datetime import datetime
 
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, model_validator
 from torch.nn import functional as F
+from torch.utils.tensorboard.writer import SummaryWriter
 
 import datasets as corpora
 from checkpoint_io import git_sha, manifest_repo, sha256_file, upload_checkpoint
@@ -51,7 +53,7 @@ PROFILES: dict[str, Hyperparameters] = {
         n_layer=2,
         block_size=64,
         batch_size=32,
-        max_iters=1000,
+        max_iters=5000,
     ),
     "large": Hyperparameters(
         n_embd=768,
@@ -334,6 +336,11 @@ def _main() -> None:
         choices=corpora.names(),
         help="Training corpus. See `datasets/` for available options.",
     )
+    parser.add_argument(
+        "--no-tensorboard",
+        action="store_true",
+        help="Skip TensorBoard logging. By default each training run is logged under ./runs/.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(1337)
@@ -414,12 +421,25 @@ def _main() -> None:
     os.makedirs(checkpoint_dir, exist_ok=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=hp.learning_rate)
 
+    writer: SummaryWriter | None = None
+    if not args.no_tensorboard:
+        run_name = f"{datetime.now():%Y%m%d-%H%M%S}_{ACTIVE_PROFILE}_{args.dataset}"
+        log_dir = os.path.join("runs", run_name)
+        writer = SummaryWriter(log_dir=log_dir)
+        writer.add_text("hparams", f"```\n{json.dumps(hp.model_dump(), indent=2)}\n```")
+        writer.add_text("profile", ACTIVE_PROFILE)
+        writer.add_text("dataset", args.dataset)
+        print(f"tensorboard: logging to {log_dir}")
+
     for iter in range(hp.max_iters):
         if iter % hp.eval_interval == 0 or iter == hp.max_iters - 1:
             losses = estimate_loss()
             print(
                 f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
             )
+            if writer is not None:
+                writer.add_scalar("loss/train", losses["train"].item(), iter)
+                writer.add_scalar("loss/val", losses["val"].item(), iter)
             ckpt_path = os.path.join(
                 checkpoint_dir,
                 f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
@@ -444,6 +464,9 @@ def _main() -> None:
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
+
+    if writer is not None:
+        writer.close()
 
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     print(

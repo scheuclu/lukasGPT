@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=2.4.4",
     "streamlit>=1.57.0",
     "huggingface-hub>=1.14.0",
+    "tensorboard>=2.20.0",
 ]
 
 [dependency-groups]
