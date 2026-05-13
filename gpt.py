@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Callable, Iterable
 
 import torch
 import torch.nn as nn
@@ -357,7 +358,7 @@ def _main() -> None:
         print(f"loading checkpoint from {args.infer}")
         model, chars, hp = load_model_from_checkpoint(args.infer, device=device)
         itos = {i: ch for i, ch in enumerate(chars)}
-        decode = lambda l: "".join([itos[i] for i in l])
+        decode: Callable[[Iterable[int]], str] = lambda l: "".join([itos[i] for i in l])
         print(
             f"  architecture: n_embd={hp.n_embd} n_head={hp.n_head} n_layer={hp.n_layer} "
             f"block_size={hp.block_size} dropout={hp.dropout}"
@@ -390,8 +391,8 @@ def _main() -> None:
     vocab_size = len(chars)
     stoi = {ch: i for i, ch in enumerate(chars)}
     itos = {i: ch for i, ch in enumerate(chars)}
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: "".join([itos[i] for i in l])
+    encode: Callable[[str], list[int]] = lambda s: [stoi[c] for c in s]
+    decode: Callable[[Iterable[int]], str] = lambda l: "".join([itos[i] for i in l])
 
     data = torch.tensor(encode(text), dtype=torch.long)
     n = int(0.9 * len(data))

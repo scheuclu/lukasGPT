@@ -13,9 +13,8 @@ from .base import Dataset
 from .shakespeare import Shakespeare
 from .tinystories import TinyStories
 
-_REGISTRY: dict[str, type[Dataset]] = {
-    cls.name: cls for cls in [TinyStories, Shakespeare]
-}
+_DATASETS: list[type[Dataset]] = [TinyStories, Shakespeare]
+_REGISTRY: dict[str, type[Dataset]] = {cls.name: cls for cls in _DATASETS}
 
 
 def get(name: str) -> Dataset:

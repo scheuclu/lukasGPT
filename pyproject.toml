@@ -29,3 +29,4 @@ reportMissingTypeStubs = false
 # private. Silence the noise rather than peppering the code with `from torch
 # import tensor`.
 reportPrivateImportUsage = false
+reportUnknownVariableType = "warning"

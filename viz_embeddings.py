@@ -91,9 +91,9 @@ def residuals_for_prompts(
     """
     stoi = {c: i for i, c in enumerate(chars)}
     block_size = model.hp.block_size
-    vecs = []
-    valid = []
-    skipped = []
+    vecs: list[torch.Tensor] = []
+    valid: list[str] = []
+    skipped: list[tuple[str, str]] = []
     for p in prompts:
         ids = [stoi[c] for c in p if c in stoi]
         if not ids:
@@ -180,8 +180,9 @@ def prompt_scatter(coords: torch.Tensor, prompts: list[str]) -> go.Figure:
 
 def pca(x: torch.Tensor, k: int) -> torch.Tensor:
     x = x - x.mean(0, keepdim=True)
-    _, _, vh = torch.linalg.svd(x, full_matrices=False)
-    return x @ vh[:k].T
+    # torch.linalg.svd's stubs leak Unknown through the namedtuple unpacking.
+    _, _, vh = torch.linalg.svd(x, full_matrices=False)  # pyright: ignore[reportUnknownVariableType]
+    return x @ vh[:k].T  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
 
 
 def token_scatter(coords: torch.Tensor, chars: list[str], dim: int,
