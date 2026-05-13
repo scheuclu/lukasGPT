@@ -341,6 +341,11 @@ def _main() -> None:
         action="store_true",
         help="Skip TensorBoard logging. By default each training run is logged under ./runs/.",
     )
+    parser.add_argument(
+        "--no-sample",
+        action="store_true",
+        help="Skip generating sample text at every eval step. Useful on the `large` profile where generation is slow.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(1337)
@@ -440,6 +445,13 @@ def _main() -> None:
             if writer is not None:
                 writer.add_scalar("loss/train", losses["train"].item(), iter)
                 writer.add_scalar("loss/val", losses["val"].item(), iter)
+                if not args.no_sample:
+                    model.eval()
+                    with torch.no_grad():
+                        ctx = torch.zeros((1, 1), dtype=torch.long, device=device)
+                        sample = model.generate(ctx, max_new_tokens=200)
+                    model.train()
+                    writer.add_text("sample", f"```\n{decode(sample[0].tolist())}\n```", iter)
             ckpt_path = os.path.join(
                 checkpoint_dir,
                 f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",

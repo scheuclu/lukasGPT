@@ -47,7 +47,7 @@ Switch profiles by editing `ACTIVE_PROFILE` in `gpt.py`. Each checkpoint embeds 
 
 ## Monitoring with TensorBoard
 
-Each training run writes scalar loss curves to `./runs/<timestamp>_<profile>_<dataset>/`. Disable with `--no-tensorboard` for quick test runs.
+Each training run writes scalar loss curves and a 200-character text sample at every eval step to `./runs/<timestamp>_<profile>_<dataset>/`. Disable with `--no-tensorboard`, or keep the curves but skip generation with `--no-sample` (worth it on the `large` profile).
 
 ```bash
 uv run tensorboard --logdir=runs
