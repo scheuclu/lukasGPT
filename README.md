@@ -14,8 +14,9 @@ uv run python gpt.py --infer checkpoints/ckpt_default_step_04999.pt   # generate
 To train your own instead (CUDA required):
 
 ```bash
-uv run python gpt.py                              # default dataset: tinystories (~1.9 GB)
+uv run python gpt.py                              # default dataset: gutenberg (~2 GB PG-19 subset)
 uv run python gpt.py --dataset shakespeare        # tiny corpus for quick experiments
+uv run python gpt.py --dataset tinystories        # ~1.9 GB of simple short stories
 ```
 
 Writes `./checkpoints/ckpt_<profile>_step_*.pt`. See `datasets/` for available corpora — each is a small subclass with its URL, local cache path, and (optionally) a `postprocess` method for cleaning the raw download.

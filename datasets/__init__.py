@@ -10,10 +10,11 @@ from Hugging Face. We don't use that here.
 """
 
 from .base import Dataset
+from .gutenberg import Gutenberg
 from .shakespeare import Shakespeare
 from .tinystories import TinyStories
 
-_DATASETS: list[type[Dataset]] = [TinyStories, Shakespeare]
+_DATASETS: list[type[Dataset]] = [TinyStories, Shakespeare, Gutenberg]
 _REGISTRY: dict[str, type[Dataset]] = {cls.name: cls for cls in _DATASETS}
 
 

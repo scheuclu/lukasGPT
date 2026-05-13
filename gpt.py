@@ -332,7 +332,7 @@ def _main() -> None:
     )
     parser.add_argument(
         "--dataset",
-        default="tinystories",
+        default="gutenberg",
         choices=corpora.names(),
         help="Training corpus. See `datasets/` for available options.",
     )
