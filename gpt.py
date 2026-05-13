@@ -424,6 +424,17 @@ def _main() -> None:
     model = GPTLanguageModel(hp, vocab_size).to(device)
     print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
 
+    # Initialize lm_head.bias to log unigram frequencies. With this, the
+    # model's zero-context prediction starts at the corpus unigram
+    # distribution rather than uniform, dropping initial loss from
+    # log(vocab_size) to the unigram entropy.
+    token_counts = Counter(text)
+    with torch.no_grad():
+        freqs = torch.tensor(
+            [token_counts[ch] for ch in chars], dtype=torch.float, device=device
+        )
+        model.lm_head.bias.copy_((freqs / freqs.sum()).log())
+
     os.makedirs(checkpoint_dir, exist_ok=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=hp.learning_rate)
 
@@ -435,7 +446,6 @@ def _main() -> None:
         writer.add_text("hparams", f"```\n{json.dumps(hp.model_dump(), indent=2)}\n```")
         writer.add_text("profile", ACTIVE_PROFILE)
         writer.add_text("dataset", args.dataset)
-        token_counts = Counter(text)
         n_total = len(text)
         rows = ["| rank | id | char | count | freq |", "|---|---|---|---|---|"]
         for rank, (ch, k) in enumerate(token_counts.most_common()):
