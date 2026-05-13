@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from collections import Counter
 from collections.abc import Callable, Iterable
 from datetime import datetime
 
@@ -434,6 +435,13 @@ def _main() -> None:
         writer.add_text("hparams", f"```\n{json.dumps(hp.model_dump(), indent=2)}\n```")
         writer.add_text("profile", ACTIVE_PROFILE)
         writer.add_text("dataset", args.dataset)
+        token_counts = Counter(text)
+        n_total = len(text)
+        rows = ["| rank | id | char | count | freq |", "|---|---|---|---|---|"]
+        for rank, (ch, k) in enumerate(token_counts.most_common()):
+            rows.append(f"| {rank} | {stoi[ch]} | `{ch!r}` | {k:,} | {100 * k / n_total:.3f}% |")
+        writer.add_text("tokens", "\n".join(rows))
+        writer.add_histogram("token_distribution", data, 0)
         print(f"tensorboard: logging to {log_dir}")
 
     for iter in range(hp.max_iters):
