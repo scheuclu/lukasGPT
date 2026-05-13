@@ -1,8 +1,6 @@
 import argparse
-import hashlib
 import json
 import os
-import subprocess
 from collections.abc import Callable, Iterable
 
 import torch
@@ -11,6 +9,7 @@ from pydantic import BaseModel, model_validator
 from torch.nn import functional as F
 
 import datasets as corpora
+from checkpoint_io import git_sha, manifest_repo, sha256_file, upload_checkpoint
 
 
 class Hyperparameters(BaseModel):
@@ -269,54 +268,6 @@ class GPTLanguageModel(nn.Module):
         return idx
 
 
-def _git_sha() -> str | None:
-    """Short HEAD SHA with `-dirty` suffix if there are uncommitted changes."""
-    try:
-        sha = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except Exception:
-        return None
-    if subprocess.run(["git", "diff", "--quiet"], stderr=subprocess.DEVNULL).returncode:
-        sha = f"{sha}-dirty"
-    return sha
-
-
-def _sha256_file(path: str, chunk: int = 1 << 20) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for buf in iter(lambda: f.read(chunk), b""):
-            h.update(buf)
-    return h.hexdigest()
-
-
-def _manifest_repo() -> str | None:
-    """Read the HF Hub repo from checkpoints.json if present."""
-    try:
-        with open("checkpoints.json") as f:
-            return json.load(f).get("repo")
-    except Exception:
-        return None
-
-
-def upload_checkpoint(local_path: str, profile: str, step: int,
-                      git_sha: str, repo: str) -> str:
-    """Upload `local_path` to the given HF Hub model repo, renaming the
-    remote file to `ckpt_<profile>_step_<step>_<sha>.pt`. Creates the
-    repo if it doesn't exist. Returns the remote filename on success."""
-    from huggingface_hub import create_repo, upload_file
-    remote = f"ckpt_{profile}_step_{step:05d}_{git_sha}.pt"
-    create_repo(repo, repo_type="model", exist_ok=True)
-    upload_file(
-        path_or_fileobj=local_path,
-        path_in_repo=remote,
-        repo_id=repo,
-        repo_type="model",
-    )
-    return remote
-
-
 def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
     """Load a checkpoint and return (model, chars, hp). Used by both the
     inference CLI in __main__ and external tools like viz_embeddings.py."""
@@ -465,8 +416,8 @@ def _main() -> None:
     if args.no_upload:
         return
 
-    repo = args.upload_repo or _manifest_repo()
-    sha = _git_sha()
+    repo = args.upload_repo or manifest_repo()
+    sha = git_sha()
     final_step = hp.max_iters - 1
     final_ckpt = os.path.join(
         checkpoint_dir,
@@ -490,7 +441,7 @@ def _main() -> None:
         print(f"upload: FAILED ({type(e).__name__}: {e})")
         print(f"  rerun later with: uv run hf upload {repo} {final_ckpt} {fallback}")
         return
-    sha256 = _sha256_file(final_ckpt)
+    sha256 = sha256_file(final_ckpt)
     print(f"upload: ok → {repo}/{remote}")
     print()
     print("Manifest snippet — paste into checkpoints.json under `checkpoints`:")

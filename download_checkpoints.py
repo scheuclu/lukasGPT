@@ -12,7 +12,6 @@ retries for free.
 """
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -21,16 +20,10 @@ from typing import Any
 
 from huggingface_hub import hf_hub_download  # pyright: ignore[reportUnknownVariableType]
 
+from checkpoint_io import sha256_file
+
 MANIFEST = "checkpoints.json"
 DEST = "checkpoints"
-
-
-def sha256_file(path: str, chunk: int = 1 << 20) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for buf in iter(lambda: f.read(chunk), b""):
-            h.update(buf)
-    return h.hexdigest()
 
 
 def download_one(repo: str, entry: dict[str, Any]) -> None:
