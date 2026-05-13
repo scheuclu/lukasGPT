@@ -27,13 +27,13 @@ class Hyperparameters(BaseModel):
     learning_rate: float = 3e-4
 
     @model_validator(mode="after")
-    def _check(self):
+    def _check(self) -> "Hyperparameters":
         assert self.n_embd % self.n_head == 0, (
             f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})"
         )
         return self
 
-    def architecture_dict(self) -> dict:
+    def architecture_dict(self) -> dict[str, int | float]:
         return {
             "n_embd": self.n_embd,
             "n_head": self.n_head,
@@ -69,7 +69,10 @@ ACTIVE_PROFILE = "default"
 class Head(nn.Module):
     """one head of self-attention"""
 
-    def __init__(self, n_embd, head_size, block_size, dropout):
+    # Declared so pyright knows the registered buffer is a Tensor.
+    tril: torch.Tensor
+
+    def __init__(self, n_embd: int, head_size: int, block_size: int, dropout: float):
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
@@ -78,7 +81,7 @@ class Head(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         # input of size (batch, time-step, channels)
         # output of size (batch, time-step, head size)
         B, T, C = x.shape
@@ -100,7 +103,8 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     """multiple heads of self-attention in parallel"""
 
-    def __init__(self, n_embd, num_heads, head_size, block_size, dropout):
+    def __init__(self, n_embd: int, num_heads: int, head_size: int,
+                 block_size: int, dropout: float):
         super().__init__()
         self.heads = nn.ModuleList(
             [Head(n_embd, head_size, block_size, dropout) for _ in range(num_heads)]
@@ -108,7 +112,7 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         out = self.dropout(self.proj(out))
         return out
@@ -117,7 +121,7 @@ class MultiHeadAttention(nn.Module):
 class FeedFoward(nn.Module):
     """a simple linear layer followed by a non-linearity"""
 
-    def __init__(self, n_embd, dropout):
+    def __init__(self, n_embd: int, dropout: float):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
@@ -126,14 +130,14 @@ class FeedFoward(nn.Module):
             nn.Dropout(dropout),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
 
 class Block(nn.Module):
     """Transformer block: communication followed by computation"""
 
-    def __init__(self, n_embd, n_head, block_size, dropout):
+    def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float):
         super().__init__()
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_embd, n_head, head_size, block_size, dropout)
@@ -141,7 +145,7 @@ class Block(nn.Module):
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.sa(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
         return x
@@ -164,7 +168,7 @@ class GPTLanguageModel(nn.Module):
         # better init, not covered in the original GPT video, but important
         self.apply(self._init_weights)
 
-    def _init_weights(self, module):
+    def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
@@ -172,7 +176,11 @@ class GPTLanguageModel(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
 
@@ -194,7 +202,7 @@ class GPTLanguageModel(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def residuals(self, idx):
+    def residuals(self, idx: torch.Tensor) -> list[torch.Tensor]:
         """Run a forward pass and return the residual stream at every layer.
 
         Returns a list of (B, T, n_embd) tensors:
@@ -207,18 +215,18 @@ class GPTLanguageModel(nn.Module):
         tok_emb = self.token_embedding_table(idx)
         pos_emb = self.position_embedding_table(torch.arange(T, device=device))
         x = tok_emb + pos_emb
-        out = [x]
+        out: list[torch.Tensor] = [x]
         for block in self.blocks:
             x = block(x)
             out.append(x)
         out.append(self.ln_f(x))
         return out
 
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int) -> torch.Tensor:
         block_size = self.hp.block_size
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -block_size:]
-            logits, loss = self(idx_cond)
+            logits, _ = self(idx_cond)
             logits = logits[:, -1, :]
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
@@ -226,7 +234,13 @@ class GPTLanguageModel(nn.Module):
         return idx
 
     @torch.no_grad()
-    def generate_lookahead(self, idx, max_new_tokens, depth=2, width=4):
+    def generate_lookahead(
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int,
+        depth: int = 2,
+        width: int = 4,
+    ) -> torch.Tensor:
         # At each step, expand a depth-`depth` tree with branching factor
         # `width`, then sample one full path proportional to its joint
         # probability and commit all of its tokens at once.
@@ -316,7 +330,7 @@ def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLangu
     return model, chars, hp
 
 
-def _main():
+def _main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     checkpoint_dir = "checkpoints"
 
@@ -384,7 +398,7 @@ def _main():
     train_data = data[:n]
     val_data = data[n:]
 
-    def get_batch(split):
+    def get_batch(split: str) -> tuple[torch.Tensor, torch.Tensor]:
         d = train_data if split == "train" else val_data
         ix = torch.randint(len(d) - hp.block_size, (hp.batch_size,))
         x = torch.stack([d[i : i + hp.block_size] for i in ix])
@@ -393,14 +407,15 @@ def _main():
         return x, y
 
     @torch.no_grad()
-    def estimate_loss():
-        out = {}
+    def estimate_loss() -> dict[str, torch.Tensor]:
+        out: dict[str, torch.Tensor] = {}
         model.eval()
         for split in ["train", "val"]:
             losses = torch.zeros(hp.eval_iters)
             for k in range(hp.eval_iters):
                 X, Y = get_batch(split)
                 logits, loss = model(X, Y)
+                assert loss is not None
                 losses[k] = loss.item()
             out[split] = losses.mean()
         model.train()
@@ -438,6 +453,7 @@ def _main():
 
         xb, yb = get_batch("train")
         logits, loss = model(xb, yb)
+        assert loss is not None
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()

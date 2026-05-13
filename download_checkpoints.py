@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import sys
+from typing import Any
 
 from huggingface_hub import hf_hub_download
 
@@ -32,7 +33,7 @@ def sha256_file(path: str, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def download_one(repo: str, entry: dict) -> None:
+def download_one(repo: str, entry: dict[str, Any]) -> None:
     profile = entry["profile"]
     step = entry["step"]
     tag = f"{profile} step {step:>5}"
@@ -62,7 +63,8 @@ def download_one(repo: str, entry: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = (__doc__ or "").splitlines()[0] if __doc__ else None
+    ap = argparse.ArgumentParser(description=description)
     ap.add_argument("--profile", type=str, default=None,
                     help="Only download checkpoints from this hyperparameter profile.")
     ap.add_argument("--step", type=int, default=None,

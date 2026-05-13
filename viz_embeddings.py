@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import torch
 
-from gpt import load_model_from_checkpoint
+from gpt import GPTLanguageModel, Hyperparameters, load_model_from_checkpoint
 
 CKPT_DIR = "checkpoints"
 
@@ -59,7 +59,7 @@ def char_display(c: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def load_checkpoint(path: str):
+def load_checkpoint(path: str) -> tuple[list[str], torch.Tensor, torch.Tensor]:
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     chars: list[str] = ckpt["chars"]
     sd = ckpt["model"]
@@ -69,14 +69,20 @@ def load_checkpoint(path: str):
 
 
 @st.cache_resource(show_spinner="Loading model…")
-def load_model(path: str):
+def load_model(path: str) -> tuple[GPTLanguageModel, list[str], Hyperparameters, str]:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, chars, hp = load_model_from_checkpoint(path, device=device)
     return model, chars, hp, device
 
 
 @torch.no_grad()
-def residuals_for_prompts(model, chars, device, prompts, layer_idx):
+def residuals_for_prompts(
+    model: GPTLanguageModel,
+    chars: list[str],
+    device: str,
+    prompts: list[str],
+    layer_idx: int,
+) -> tuple[torch.Tensor | None, list[str], list[tuple[str, str]]]:
     """Encode each prompt, run the model, and return the residual at
     `layer_idx` at the last position of the prompt.
 

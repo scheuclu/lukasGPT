@@ -8,6 +8,7 @@ disk, and returns the final text.
 
 import os
 import urllib.request
+from typing import Callable
 
 
 class Dataset:
@@ -55,7 +56,7 @@ class Dataset:
         return raw
 
 
-def _progress(label: str):
+def _progress(label: str) -> Callable[[int, int, int], None]:
     def hook(block_num: int, block_size: int, total_size: int) -> None:
         done = block_num * block_size
         if total_size > 0:

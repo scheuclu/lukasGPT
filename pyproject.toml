@@ -12,3 +12,20 @@ dependencies = [
     "streamlit>=1.57.0",
     "huggingface-hub>=1.14.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.409",
+]
+
+[tool.pyright]
+include = ["gpt.py", "datasets", "viz_embeddings.py", "download_checkpoints.py"]
+exclude = ["bigram.py", ".venv", "**/__pycache__"]
+pythonVersion = "3.13"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+# torch's stubs declare lots of public functions (`torch.tensor`, `torch.cat`,
+# `torch.zeros`, ...) without an explicit re-export, which pyright treats as
+# private. Silence the noise rather than peppering the code with `from torch
+# import tensor`.
+reportPrivateImportUsage = false
