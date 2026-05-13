@@ -157,27 +157,6 @@ def prompt_similarity_heatmap(matrix: torch.Tensor, prompts: list[str],
     return fig
 
 
-def prompt_scatter(coords: torch.Tensor, prompts: list[str]) -> go.Figure:
-    hovers = [f"{p!r}" for p in prompts]
-    short = [p if len(p) <= 20 else p[:18] + "…" for p in prompts]
-    fig = go.Figure(data=go.Scatter3d(
-        x=coords[:, 0].tolist(),
-        y=coords[:, 1].tolist(),
-        z=coords[:, 2].tolist(),
-        mode="markers+text",
-        text=short,
-        textposition="top center",
-        hovertext=hovers,
-        hoverinfo="text",
-        marker=dict(size=6, color="#1f77b4", line=dict(width=1, color="white")),
-    ))
-    fig.update_layout(template="plotly_white",
-                      margin=dict(l=0, r=0, t=10, b=0),
-                      height=700)
-    fig.update_scenes(xaxis_title="PC1", yaxis_title="PC2", zaxis_title="PC3")
-    return fig
-
-
 def pca(x: torch.Tensor, k: int) -> torch.Tensor:
     x = x - x.mean(0, keepdim=True)
     # torch.linalg.svd's stubs leak Unknown through the namedtuple unpacking.
@@ -358,21 +337,17 @@ with tab_resid:
         "model. We grab the residual stream at the chosen layer at the "
         "*last position* of the prompt — that's the vector the model would "
         "use to predict the next character, after attending over the whole "
-        "prompt. Then we PCA-3D across prompts."
+        "prompt. Then we plot pairwise cosine similarity across prompts."
     )
     model, m_chars, m_hp, m_device = load_model(ckpt_path)
 
     default_prompts = (
-        "the king\n"
-        "the queen\n"
-        "the brother\n"
-        "the sister\n"
-        "the boy\n"
-        "the girl\n"
-        "the man\n"
-        "the woman\n"
-        "the cat\n"
-        "the dog"
+        "mother\n"
+        "brother\n"
+        "sister\n"
+        "father\n"
+        "my fathers daughter\n"
+        "sibling"
     )
     prompts_text = st.text_area(
         "prompts (one per line)", value=default_prompts, height=240,
@@ -404,17 +379,6 @@ with tab_resid:
             for p, reason in skipped:
                 st.warning(f"skipped {p!r}: {reason}")
         if mat is not None and mat.shape[0] >= 2:
-            coords = pca(mat, 3)
-            st.plotly_chart(prompt_scatter(coords, valid),
-                            use_container_width=True)
-            st.caption(
-                f"Residual at layer {layer_idx}, last position. PCA-3D across "
-                f"{mat.shape[0]} prompts. Pairs that should be semantically "
-                "related (e.g. king/queen, brother/sister) ideally land near "
-                "each other — but remember this is a 10M-param char model "
-                "trained on ~1M chars, so the structure is weak and noisy."
-            )
-            st.markdown("##### Pairwise cosine similarity")
             sim_mode = st.radio(
                 "color scale",
                 options=["centered", "raw", "autoscale"],
@@ -433,12 +397,13 @@ with tab_resid:
                 use_container_width=True,
             )
             st.caption(
-                "Cosine similarity between the full residual vectors. "
-                "Red = aligned, blue = opposite, white = orthogonal. "
-                "Transformer residuals are anisotropic (they cluster in a "
-                "narrow cone), so the 'centered' mode is usually the most "
-                "informative — it shows differences relative to the average "
-                "prompt direction at this layer."
+                f"Residual at layer {layer_idx}, last position. Cosine "
+                f"similarity between the full residual vectors across "
+                f"{mat.shape[0]} prompts. Red = aligned, blue = opposite, "
+                "white = orthogonal. Transformer residuals are anisotropic "
+                "(they cluster in a narrow cone), so the 'centered' mode is "
+                "usually the most informative — it shows differences relative "
+                "to the average prompt direction at this layer."
             )
         elif mat is not None:
             st.info("Need at least 2 valid prompts for PCA.")
