@@ -63,7 +63,7 @@ PROFILES: dict[str, Hyperparameters] = {
     ),
 }
 
-ACTIVE_PROFILE = "default"
+ACTIVE_PROFILE = "tiny"
 
 
 class Head(nn.Module):
@@ -103,8 +103,14 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     """multiple heads of self-attention in parallel"""
 
-    def __init__(self, n_embd: int, num_heads: int, head_size: int,
-                 block_size: int, dropout: float):
+    def __init__(
+        self,
+        n_embd: int,
+        num_heads: int,
+        head_size: int,
+        block_size: int,
+        dropout: float,
+    ):
         super().__init__()
         self.heads = nn.ModuleList(
             [Head(n_embd, head_size, block_size, dropout) for _ in range(num_heads)]
@@ -159,8 +165,10 @@ class GPTLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, hp.n_embd)
         self.position_embedding_table = nn.Embedding(hp.block_size, hp.n_embd)
         self.blocks = nn.Sequential(
-            *[Block(hp.n_embd, hp.n_head, hp.block_size, hp.dropout)
-              for _ in range(hp.n_layer)]
+            *[
+                Block(hp.n_embd, hp.n_head, hp.block_size, hp.dropout)
+                for _ in range(hp.n_layer)
+            ]
         )
         self.ln_f = nn.LayerNorm(hp.n_embd)
         self.lm_head = nn.Linear(hp.n_embd, vocab_size)
@@ -268,7 +276,9 @@ class GPTLanguageModel(nn.Module):
         return idx
 
 
-def load_model_from_checkpoint(path: str, device: str = "cpu") -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
+def load_model_from_checkpoint(
+    path: str, device: str = "cpu"
+) -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
     """Load a checkpoint and return (model, chars, hp). Used by both the
     inference CLI in __main__ and external tools like viz_embeddings.py."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
@@ -287,20 +297,43 @@ def _main() -> None:
     checkpoint_dir = "checkpoints"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--infer", type=str, default=None,
-                        help="Path to a checkpoint .pt file. If set, skip training and just generate text.")
-    parser.add_argument("--max-new-tokens", type=int, default=500,
-                        help="Number of tokens to generate.")
-    parser.add_argument("--lookahead-depth", type=int, default=1,
-                        help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.")
-    parser.add_argument("--lookahead-width", type=int, default=4,
-                        help="Branching factor at each level of the lookahead tree (top-K candidates).")
-    parser.add_argument("--no-upload", action="store_true",
-                        help="Skip auto-upload of the final checkpoint to HF Hub at end of training.")
-    parser.add_argument("--upload-repo", default=None,
-                        help="HF Hub model repo to upload to. Default: `repo` field in checkpoints.json.")
-    parser.add_argument("--dataset", default="tinystories", choices=corpora.names(),
-                        help="Training corpus. See `datasets/` for available options.")
+    parser.add_argument(
+        "--infer",
+        type=str,
+        default=None,
+        help="Path to a checkpoint .pt file. If set, skip training and just generate text.",
+    )
+    parser.add_argument(
+        "--max-new-tokens", type=int, default=500, help="Number of tokens to generate."
+    )
+    parser.add_argument(
+        "--lookahead-depth",
+        type=int,
+        default=1,
+        help="If >1, use lookahead sampling: expand a depth-N tree and sample a path by joint probability.",
+    )
+    parser.add_argument(
+        "--lookahead-width",
+        type=int,
+        default=4,
+        help="Branching factor at each level of the lookahead tree (top-K candidates).",
+    )
+    parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="Skip auto-upload of the final checkpoint to HF Hub at end of training.",
+    )
+    parser.add_argument(
+        "--upload-repo",
+        default=None,
+        help="HF Hub model repo to upload to. Default: `repo` field in checkpoints.json.",
+    )
+    parser.add_argument(
+        "--dataset",
+        default="tinystories",
+        choices=corpora.names(),
+        help="Training corpus. See `datasets/` for available options.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(1337)
@@ -317,7 +350,9 @@ def _main() -> None:
         print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
         context = torch.zeros((1, 1), dtype=torch.long, device=device)
         if args.lookahead_depth > 1:
-            print(f"  lookahead sampling: depth={args.lookahead_depth} width={args.lookahead_width}")
+            print(
+                f"  lookahead sampling: depth={args.lookahead_depth} width={args.lookahead_width}"
+            )
             out = model.generate_lookahead(
                 context,
                 max_new_tokens=args.max_new_tokens,
@@ -411,7 +446,9 @@ def _main() -> None:
         optimizer.step()
 
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(decode(model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()))
+    print(
+        decode(model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist())
+    )
 
     if args.no_upload:
         return
@@ -424,7 +461,9 @@ def _main() -> None:
         f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}.pt",
     )
     if not repo:
-        print("upload: skipped (no repo configured; use --upload-repo or set `repo` in checkpoints.json)")
+        print(
+            "upload: skipped (no repo configured; use --upload-repo or set `repo` in checkpoints.json)"
+        )
         return
     if not sha:
         print("upload: skipped (not in a git repo)")
@@ -433,7 +472,9 @@ def _main() -> None:
         print(f"upload: skipped ({final_ckpt} not found)")
         return
 
-    print(f"upload: pushing {final_ckpt} to {repo} (profile={ACTIVE_PROFILE}, sha={sha})")
+    print(
+        f"upload: pushing {final_ckpt} to {repo} (profile={ACTIVE_PROFILE}, sha={sha})"
+    )
     try:
         remote = upload_checkpoint(final_ckpt, ACTIVE_PROFILE, final_step, sha, repo)
     except Exception as e:
@@ -445,13 +486,18 @@ def _main() -> None:
     print(f"upload: ok → {repo}/{remote}")
     print()
     print("Manifest snippet — paste into checkpoints.json under `checkpoints`:")
-    print(json.dumps({
-        "profile": ACTIVE_PROFILE,
-        "step": final_step,
-        "git_sha": sha,
-        "filename": remote,
-        "sha256": sha256,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "profile": ACTIVE_PROFILE,
+                "step": final_step,
+                "git_sha": sha,
+                "filename": remote,
+                "sha256": sha256,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
