@@ -21,17 +21,25 @@
     button { background: var(--accent); color: white; border: 0; padding: .5rem 1rem;
              border-radius: 4px; cursor: pointer; font: inherit; }
     button:disabled { opacity: .5; cursor: wait; }
+    #prompt { width: 100%; padding: .4rem .5rem; font: inherit;
+              border: 1px solid rgba(127,127,127,0.3); border-radius: 4px;
+              background: var(--bg); color: var(--fg); box-sizing: border-box; }
     #output { white-space: pre-wrap; background: rgba(127,127,127,0.08);
               padding: 1rem; border-radius: 4px; min-height: 12rem; margin-top: 1rem;
               font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+    #output .primer { color: var(--accent); font-weight: 500; }
     #status { color: var(--muted); font-size: 13px; margin-top: .5rem; }
+    #ckpt-info { color: var(--muted); font-size: 12px; margin: -1rem 0 1rem;
+                 font-family: ui-monospace, "SF Mono", Menlo, monospace; }
     .stats { color: var(--muted); font-size: 12px; }
   </style>
 </head>
 <body>
   <h1>nanoGPT — char-level demo</h1>
   <p class="lede">Karpathy's tiny transformer, trained on Project Gutenberg books and running fully in your browser via ONNX Runtime Web.</p>
+  <p id="ckpt-info"></p>
 
+  <input id="prompt" type="text" placeholder="prompt to continue from (optional)" />
   <div class="row">
     <label>tokens <input id="ntokens" type="number" value="200" min="1" max="2000" /></label>
     <label>temp <input id="temp" type="number" value="1.0" min="0.1" max="2.0" step="0.1" /></label>
@@ -42,6 +50,7 @@
   <div id="output"></div>
   <p class="stats" id="stats"></p>
 
-  <script type="module" src="./main.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort.min.js"></script>
+  <script src="./main.js"></script>
 </body>
 </html>

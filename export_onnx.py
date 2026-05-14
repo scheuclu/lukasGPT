@@ -70,6 +70,7 @@ def main() -> None:
         "n_layer": hp.n_layer,
         "n_embd": hp.n_embd,
         "n_head": hp.n_head,
+        "checkpoint": os.path.basename(args.ckpt),
     }
     with open(args.vocab_out, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)

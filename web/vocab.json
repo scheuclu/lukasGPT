@@ -98,5 +98,6 @@
   "vocab_size": 93,
   "n_layer": 6,
   "n_embd": 384,
-  "n_head": 6
+  "n_head": 6,
+  "checkpoint": "ckpt_default_step_03375.pt"
 }
