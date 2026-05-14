@@ -39,10 +39,10 @@
   <p class="lede">Karpathy's tiny transformer, trained on Project Gutenberg books and running fully in your browser via ONNX Runtime Web.</p>
   <p id="ckpt-info"></p>
 
-  <input id="prompt" type="text" placeholder="prompt to continue from (optional)" />
+  <input id="prompt" type="text" value="Her fathers wife is her" placeholder="prompt to continue from (optional)" />
   <div class="row">
     <label>tokens <input id="ntokens" type="number" value="200" min="1" max="2000" /></label>
-    <label>temp <input id="temp" type="number" value="1.0" min="0.1" max="2.0" step="0.1" /></label>
+    <label>temp <input id="temp" type="number" value="0.5" min="0.1" max="2.0" step="0.1" /></label>
     <label>top-k <input id="topk" type="number" value="40" min="1" max="500" /></label>
     <button id="go" disabled>loading…</button>
   </div>
