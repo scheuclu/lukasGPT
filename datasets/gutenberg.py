@@ -37,15 +37,15 @@ class Gutenberg(Dataset):
         "DeepMind PG-19 subset (Project Gutenberg books pre-1919). "
         "First 3000 books, ~2 GB. Set max_books=None to download all 28,602."
     )
-    max_books: int | None = 300
+    max_books: int | None = 3000
 
     def prepare(self, path: str | None = None) -> str:
         path = path or self.default_path
 
-        # if os.path.exists(path):
-        #     print(f"using cached {path}")
-        #     with open(path, "r", encoding="utf-8") as f:
-        #         return f.read()
+        if os.path.exists(path):
+            print(f"using cached {path}")
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
 
         manifest = hf_hub_download(
             PG19_MANIFEST_REPO, PG19_MANIFEST_FILE, repo_type="dataset"
@@ -71,7 +71,8 @@ class Gutenberg(Dataset):
                 if (i + 1) % 50 == 0 or i + 1 == len(book_paths):
                     print(
                         f"\r  {i + 1}/{len(book_paths)} books · {chars / 1e9:.2f} GB",
-                        end="", flush=True,
+                        end="",
+                        flush=True,
                     )
         print()
 

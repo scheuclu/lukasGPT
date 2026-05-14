@@ -25,7 +25,7 @@ class Hyperparameters(BaseModel):
     # Training (not persisted; only used in the training branch)
     batch_size: int = 128
     max_iters: int = 5000
-    eval_interval: int = 50
+    eval_interval: int = 25
     eval_iters: int = 200
     learning_rate: float = 3e-4
 
@@ -53,7 +53,7 @@ PROFILES: dict[str, Hyperparameters] = {
         n_head=4,
         n_layer=2,
         block_size=64,
-        batch_size=32,
+        batch_size=64,
         max_iters=5000,
     ),
     "large": Hyperparameters(
@@ -66,7 +66,7 @@ PROFILES: dict[str, Hyperparameters] = {
     ),
 }
 
-ACTIVE_PROFILE = "tiny"
+ACTIVE_PROFILE = "default"
 
 
 class Head(nn.Module):
@@ -449,7 +449,9 @@ def _main() -> None:
         n_total = len(text)
         rows = ["| rank | id | char | count | freq |", "|---|---|---|---|---|"]
         for rank, (ch, k) in enumerate(token_counts.most_common()):
-            rows.append(f"| {rank} | {stoi[ch]} | `{ch!r}` | {k:,} | {100 * k / n_total:.3f}% |")
+            rows.append(
+                f"| {rank} | {stoi[ch]} | `{ch!r}` | {k:,} | {100 * k / n_total:.3f}% |"
+            )
         writer.add_text("tokens", "\n".join(rows))
         writer.add_histogram("token_distribution", data, 0)
         print(f"tensorboard: logging to {log_dir}")
@@ -469,7 +471,9 @@ def _main() -> None:
                         ctx = torch.zeros((1, 1), dtype=torch.long, device=device)
                         sample = model.generate(ctx, max_new_tokens=200)
                     model.train()
-                    writer.add_text("sample", f"```\n{decode(sample[0].tolist())}\n```", iter)
+                    writer.add_text(
+                        "sample", f"```\n{decode(sample[0].tolist())}\n```", iter
+                    )
             ckpt_path = os.path.join(
                 checkpoint_dir,
                 f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
