@@ -12,15 +12,17 @@ dependencies = [
     "streamlit>=1.57.0",
     "huggingface-hub>=1.14.0",
     "tensorboard>=2.20.0",
+    "onnx>=1.21.0",
 ]
 
 [dependency-groups]
 dev = [
+    "onnxruntime>=1.26.0",
     "pyright>=1.1.409",
 ]
 
 [tool.pyright]
-include = ["gpt.py", "datasets", "viz_embeddings.py", "download_checkpoints.py", "checkpoint_io.py"]
+include = ["gpt.py", "datasets", "viz_embeddings.py", "download_checkpoints.py", "checkpoint_io.py", "export_onnx.py"]
 exclude = ["bigram.py", ".venv", "**/__pycache__"]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
