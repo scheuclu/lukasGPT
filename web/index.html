@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>nanoGPT — char-level demo</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root { color-scheme: light dark; --fg: #222; --bg: #fafafa; --muted: #888; --accent: #1f77b4; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg: #eee; --bg: #181818; --muted: #999; --accent: #4a9eda; }
+    }
+    body { font: 15px/1.45 -apple-system, system-ui, "Segoe UI", sans-serif;
+           color: var(--fg); background: var(--bg);
+           max-width: 760px; margin: 2.5rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+    p.lede { color: var(--muted); margin: 0 0 1.5rem; }
+    .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+    label { color: var(--muted); font-size: 13px; }
+    input[type=number] { width: 5rem; padding: .25rem .4rem; }
+    button { background: var(--accent); color: white; border: 0; padding: .5rem 1rem;
+             border-radius: 4px; cursor: pointer; font: inherit; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #output { white-space: pre-wrap; background: rgba(127,127,127,0.08);
+              padding: 1rem; border-radius: 4px; min-height: 12rem; margin-top: 1rem;
+              font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+    #status { color: var(--muted); font-size: 13px; margin-top: .5rem; }
+    .stats { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>nanoGPT — char-level demo</h1>
+  <p class="lede">Karpathy's tiny transformer, trained on Project Gutenberg books and running fully in your browser via ONNX Runtime Web.</p>
+
+  <div class="row">
+    <label>tokens <input id="ntokens" type="number" value="200" min="1" max="2000" /></label>
+    <label>temp <input id="temp" type="number" value="1.0" min="0.1" max="2.0" step="0.1" /></label>
+    <label>top-k <input id="topk" type="number" value="40" min="1" max="500" /></label>
+    <button id="go" disabled>loading…</button>
+  </div>
+  <div id="status">initializing…</div>
+  <div id="output"></div>
+  <p class="stats" id="stats"></p>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

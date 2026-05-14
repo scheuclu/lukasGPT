@@ -61,6 +61,25 @@ uv run tensorboard --logdir=runs --bind_all
 
 Then hit `http://<this-machine>:6006` from your phone/laptop over Tailscale.
 
+## Browser-side inference (ONNX + GitHub Pages)
+
+A trained checkpoint can be exported to ONNX and run entirely in the visitor's browser via ONNX Runtime Web — no server, no API key.
+
+```bash
+uv run python export_onnx.py checkpoints/ckpt_default_step_03375.pt
+```
+
+Writes `web/model.onnx` (~44 MB at the `default` profile) and `web/vocab.json`. The static frontend in `web/` loads both, drives the autoregressive sampling loop in JS, and renders the generated text live.
+
+To preview locally:
+
+```bash
+python -m http.server -d web 8000
+# open http://localhost:8000
+```
+
+To deploy: the `.github/workflows/pages.yml` workflow publishes `web/` to GitHub Pages on every push to master that touches `web/**`. Enable Pages in repo settings → Pages → Source: GitHub Actions, then merge a change. The model file is committed alongside the JS so the deploy is a single artifact.
+
 ## Inference
 
 ```bash
@@ -96,6 +115,8 @@ The sidebar lets you scrub across training-step checkpoints and watch the embedd
 - `checkpoints.json` + `download_checkpoints.py` — manifest and downloader for published checkpoints
 - `checkpoints/` — training checkpoints (gitignored; populated by training or by the downloader)
 - `runs/` — TensorBoard event files, one subdir per training run (gitignored)
+- `export_onnx.py` — convert a `.pt` checkpoint to ONNX for browser-side inference
+- `web/` — static HTML/JS demo (ONNX Runtime Web). Deployed to GitHub Pages on push
 
 ## Publishing new checkpoints (maintainers)
 
