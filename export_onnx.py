@@ -42,7 +42,7 @@ def main() -> None:
     args = ap.parse_args()
 
     print(f"loading {args.ckpt}")
-    model, chars, hp = load_model_from_checkpoint(args.ckpt, device="cpu")
+    model, tokenizer, hp = load_model_from_checkpoint(args.ckpt, device="cpu")
     wrapped = InferenceWrapper(model)
     wrapped.eval()
 
@@ -63,15 +63,27 @@ def main() -> None:
     size_mb = os.path.getsize(args.out) / 1e6
     print(f"  wrote {args.out} ({size_mb:.1f} MB)")
 
+    # One decoded string per token ID. For char-level each entry is a single
+    # character; for BPE entries are byte-decoded substrings (possibly empty
+    # / multi-byte). The JS frontend just renders `tokens[id]` after each
+    # sample, so both tokenizers display correctly.
+    tokens = [tokenizer.decode([i]) for i in range(tokenizer.vocab_size)]
     meta: dict[str, object] = {
-        "chars": chars,
+        "tokens": tokens,
+        "tokenizer": tokenizer.name,
         "block_size": hp.block_size,
-        "vocab_size": len(chars),
+        "vocab_size": tokenizer.vocab_size,
         "n_layer": hp.n_layer,
         "n_embd": hp.n_embd,
         "n_head": hp.n_head,
         "checkpoint": os.path.basename(args.ckpt),
     }
+    # Char-level: keep the legacy `chars` field so the existing JS frontend
+    # (which builds its stoi map from it for prompt encoding) keeps working
+    # without changes. BPE prompt encoding would need a JS BPE encoder; out
+    # of scope for this change.
+    if tokenizer.name == "char":
+        meta["chars"] = tokens
     with open(args.vocab_out, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
     print(f"  wrote {args.vocab_out}")

@@ -13,6 +13,7 @@ import streamlit as st
 import torch
 
 from gpt import GPTLanguageModel, Hyperparameters, load_model_from_checkpoint
+from tokenizers import CharTokenizer
 
 CKPT_DIR = "checkpoints"
 
@@ -61,7 +62,18 @@ def char_display(c: str) -> str:
 @st.cache_data(show_spinner=False)
 def load_checkpoint(path: str) -> tuple[list[str], torch.Tensor, torch.Tensor]:
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
-    chars: list[str] = ckpt["chars"]
+    # The embedding viz is char-tokenizer-only — per-character category
+    # coloring and similarity heatmaps don't translate to BPE subword tokens.
+    if "chars" in ckpt:
+        chars: list[str] = ckpt["chars"]
+    elif ckpt.get("tokenizer_type") == "char":
+        chars = ckpt["tokenizer_state"]["chars"]
+    else:
+        raise ValueError(
+            f"{os.path.basename(path)} is a non-char tokenizer "
+            f"({ckpt.get('tokenizer_type', 'unknown')}); the embedding viz "
+            f"only supports char-level checkpoints."
+        )
     sd = ckpt["model"]
     tok = sd["token_embedding_table.weight"].float()
     pos = sd["position_embedding_table.weight"].float()
@@ -71,8 +83,13 @@ def load_checkpoint(path: str) -> tuple[list[str], torch.Tensor, torch.Tensor]:
 @st.cache_resource(show_spinner="Loading model…")
 def load_model(path: str) -> tuple[GPTLanguageModel, list[str], Hyperparameters, str]:
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model, chars, hp = load_model_from_checkpoint(path, device=device)
-    return model, chars, hp, device
+    model, tokenizer, hp = load_model_from_checkpoint(path, device=device)
+    if not isinstance(tokenizer, CharTokenizer):
+        raise ValueError(
+            f"{os.path.basename(path)} uses {tokenizer.name} tokenizer; "
+            f"the embedding viz only supports char-level checkpoints."
+        )
+    return model, tokenizer.chars, hp, device
 
 
 @torch.no_grad()

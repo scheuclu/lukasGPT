@@ -1,8 +1,6 @@
 import argparse
 import json
 import os
-from collections import Counter
-from collections.abc import Callable, Iterable
 from datetime import datetime
 
 import torch
@@ -12,7 +10,9 @@ from torch.nn import functional as F
 from torch.utils.tensorboard.writer import SummaryWriter
 
 import datasets as corpora
+import tokenizers as tok
 from checkpoint_io import git_sha, manifest_repo, sha256_file, upload_checkpoint
+from tokenizers.base import Tokenizer
 
 
 class Hyperparameters(BaseModel):
@@ -278,21 +278,30 @@ class GPTLanguageModel(nn.Module):
 
 def load_model_from_checkpoint(
     path: str, device: str = "cpu"
-) -> tuple[GPTLanguageModel, list[str], Hyperparameters]:
-    """Load a checkpoint and return (model, chars, hp). Used by both the
+) -> tuple[GPTLanguageModel, Tokenizer, Hyperparameters]:
+    """Load a checkpoint and return (model, tokenizer, hp). Used by both the
     inference CLI in __main__ and external tools like viz_embeddings.py."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
-    if "chars" not in ckpt or "hparams" not in ckpt:
-        raise ValueError(f"checkpoint {path} missing 'chars' or 'hparams'")
-    chars = ckpt["chars"]
+    if "hparams" not in ckpt:
+        raise ValueError(f"checkpoint {path} missing 'hparams'")
+    # New format: tokenizer_type + tokenizer_state. Legacy format: just `chars`.
+    if "tokenizer_type" in ckpt and "tokenizer_state" in ckpt:
+        tokenizer = tok.get(ckpt["tokenizer_type"])
+        tokenizer.load_state_dict(ckpt["tokenizer_state"])
+    elif "chars" in ckpt:
+        tokenizer = tok.get("char")
+        tokenizer.load_state_dict({"chars": ckpt["chars"]})
+    else:
+        raise ValueError(f"checkpoint {path} missing tokenizer info ('chars' or 'tokenizer_state')")
+
     hp = Hyperparameters(**ckpt["hparams"])
-    model = GPTLanguageModel(hp, vocab_size=len(chars)).to(device)
+    model = GPTLanguageModel(hp, vocab_size=tokenizer.vocab_size).to(device)
     # Older checkpoints (pre-tril-removal) carry per-head 'tril' buffers we
     # no longer hold; drop them so load_state_dict doesn't complain.
     state = {k: v for k, v in ckpt["model"].items() if not k.endswith(".tril")}
     model.load_state_dict(state)
     model.eval()
-    return model, chars, hp
+    return model, tokenizer, hp
 
 
 def _main() -> None:
@@ -347,19 +356,30 @@ def _main() -> None:
         action="store_true",
         help="Skip generating sample text at every eval step. Useful on the `large` profile where generation is slow.",
     )
+    parser.add_argument(
+        "--tokenizer",
+        default="char",
+        choices=tok.names(),
+        help="Tokenizer to use. 'char' = one token per character; 'bpe' = byte-level BPE trained on the corpus.",
+    )
+    parser.add_argument(
+        "--tokenizer-vocab-size",
+        type=int,
+        default=1024,
+        help="Target vocab size when --tokenizer is 'bpe'. Ignored otherwise.",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(1337)
 
     if args.infer is not None:
         print(f"loading checkpoint from {args.infer}")
-        model, chars, hp = load_model_from_checkpoint(args.infer, device=device)
-        itos = {i: ch for i, ch in enumerate(chars)}
-        decode: Callable[[Iterable[int]], str] = lambda l: "".join([itos[i] for i in l])
+        model, tokenizer, hp = load_model_from_checkpoint(args.infer, device=device)
         print(
             f"  architecture: n_embd={hp.n_embd} n_head={hp.n_head} n_layer={hp.n_layer} "
             f"block_size={hp.block_size} dropout={hp.dropout}"
         )
+        print(f"  tokenizer: {tokenizer.name} (vocab={tokenizer.vocab_size})")
         print(sum(p.numel() for p in model.parameters()) / 1e6, "M parameters")
         context = torch.zeros((1, 1), dtype=torch.long, device=device)
         if args.lookahead_depth > 1:
@@ -374,7 +394,7 @@ def _main() -> None:
             )
         else:
             out = model.generate(context, max_new_tokens=args.max_new_tokens)
-        print(decode(out[0].tolist()))
+        print(tokenizer.decode(out[0].tolist()))
         return
 
     assert device == "cuda", "training requires CUDA"
@@ -386,14 +406,39 @@ def _main() -> None:
     text = dataset.prepare()
     print(f"text is in RAM ({len(text):,} chars)")
 
-    chars = sorted(list(set(text)))
-    vocab_size = len(chars)
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
-    encode: Callable[[str], list[int]] = lambda s: [stoi[c] for c in s]
-    decode: Callable[[Iterable[int]], str] = lambda l: "".join([itos[i] for i in l])
+    tokenizer_kwargs = (
+        {"vocab_size": args.tokenizer_vocab_size} if args.tokenizer == "bpe" else {}
+    )
+    tokenizer = tok.get(args.tokenizer, **tokenizer_kwargs)
+    print(f"tokenizer: {tokenizer.name} (training …)")
+    tokenizer.train(text)
+    print(f"  vocab_size={tokenizer.vocab_size}")
+    vocab_size = tokenizer.vocab_size
 
-    data = torch.tensor(encode(text), dtype=torch.long)
+    # Encoding the full corpus through naive BPE is slow (~minutes), so we
+    # cache the result to disk keyed on dataset + tokenizer config. The
+    # cached file also stores the tokenizer state to detect staleness.
+    cache_id = (
+        f"{tokenizer.name}_v{tokenizer.vocab_size}"
+        if tokenizer.name != "char"
+        else "char"
+    )
+    cache_path = f"{dataset.default_path}.{cache_id}.cache.pt"
+    cached_state = tokenizer.state_dict()
+    if os.path.exists(cache_path):
+        cache = torch.load(cache_path, weights_only=False)
+        if cache.get("tokenizer_state") == cached_state:
+            print(f"using cached encoded corpus at {cache_path}")
+            data = cache["data"]
+        else:
+            print(f"  cache at {cache_path} is stale, re-encoding")
+            data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+            torch.save({"tokenizer_state": cached_state, "data": data}, cache_path)
+    else:
+        print(f"encoding corpus ({len(text):,} chars) — this can take a while for bpe")
+        data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+        torch.save({"tokenizer_state": cached_state, "data": data}, cache_path)
+        print(f"  cached encoded corpus to {cache_path}")
     n = int(0.9 * len(data))
     train_data = data[:n]
     val_data = data[n:]
@@ -428,11 +473,9 @@ def _main() -> None:
     # model's zero-context prediction starts at the corpus unigram
     # distribution rather than uniform, dropping initial loss from
     # log(vocab_size) to the unigram entropy.
-    token_counts = Counter(text)
+    token_counts = torch.bincount(data, minlength=tokenizer.vocab_size)
     with torch.no_grad():
-        freqs = torch.tensor(
-            [token_counts[ch] for ch in chars], dtype=torch.float, device=device
-        )
+        freqs = token_counts.float().to(device).clamp(min=1.0)
         model.lm_head.bias.copy_((freqs / freqs.sum()).log())
 
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -446,11 +489,18 @@ def _main() -> None:
         writer.add_text("hparams", f"```\n{json.dumps(hp.model_dump(), indent=2)}\n```")
         writer.add_text("profile", ACTIVE_PROFILE)
         writer.add_text("dataset", args.dataset)
-        n_total = len(text)
-        rows = ["| rank | id | char | count | freq |", "|---|---|---|---|---|"]
-        for rank, (ch, k) in enumerate(token_counts.most_common()):
+        writer.add_text("tokenizer", f"{tokenizer.name} (vocab={tokenizer.vocab_size})")
+        n_total = int(token_counts.sum().item())
+        # pyright loses the int type through argsort().tolist(); the cast is safe.
+        sorted_ids: list[int] = token_counts.argsort(descending=True).tolist()  # pyright: ignore[reportUnknownVariableType]
+        rows = ["| rank | id | token | count | freq |", "|---|---|---|---|---|"]
+        for rank, token_id in enumerate(sorted_ids):
+            count = int(token_counts[token_id].item())
+            if count == 0:
+                break
+            tok_str = tokenizer.decode([token_id])
             rows.append(
-                f"| {rank} | {stoi[ch]} | `{ch!r}` | {k:,} | {100 * k / n_total:.3f}% |"
+                f"| {rank} | {token_id} | `{tok_str!r}` | {count:,} | {100 * count / n_total:.3f}% |"
             )
         writer.add_text("tokens", "\n".join(rows))
         writer.add_histogram("token_distribution", data, 0)
@@ -472,24 +522,28 @@ def _main() -> None:
                         sample = model.generate(ctx, max_new_tokens=200)
                     model.train()
                     writer.add_text(
-                        "sample", f"```\n{decode(sample[0].tolist())}\n```", iter
+                        "sample", f"```\n{tokenizer.decode(sample[0].tolist())}\n```", iter
                     )
             ckpt_path = os.path.join(
                 checkpoint_dir,
                 f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
             )
-            torch.save(
-                {
-                    "iter": iter,
-                    "profile": ACTIVE_PROFILE,
-                    "model": model.state_dict(),
-                    "train_loss": losses["train"].item(),
-                    "val_loss": losses["val"].item(),
-                    "chars": chars,
-                    "hparams": hp.architecture_dict(),
-                },
-                ckpt_path,
-            )
+            ckpt_payload: dict[str, object] = {
+                "iter": iter,
+                "profile": ACTIVE_PROFILE,
+                "model": model.state_dict(),
+                "train_loss": losses["train"].item(),
+                "val_loss": losses["val"].item(),
+                "tokenizer_type": tokenizer.name,
+                "tokenizer_state": tokenizer.state_dict(),
+                "hparams": hp.architecture_dict(),
+            }
+            # Keep `chars` for backwards compat with viz_embeddings /
+            # export_onnx / the published checkpoints — only meaningful for
+            # the char tokenizer.
+            if isinstance(tokenizer, tok.CharTokenizer):
+                ckpt_payload["chars"] = tokenizer.chars
+            torch.save(ckpt_payload, ckpt_path)
             print(f"  saved checkpoint to {ckpt_path}")
 
         xb, yb = get_batch("train")
@@ -504,7 +558,9 @@ def _main() -> None:
 
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     print(
-        decode(model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist())
+        tokenizer.decode(
+            model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()
+        )
     )
 
     if args.no_upload:

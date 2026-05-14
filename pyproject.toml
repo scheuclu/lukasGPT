@@ -22,7 +22,7 @@ dev = [
 ]
 
 [tool.pyright]
-include = ["gpt.py", "datasets", "viz_embeddings.py", "download_checkpoints.py", "checkpoint_io.py", "export_onnx.py"]
+include = ["gpt.py", "datasets", "tokenizers", "viz_embeddings.py", "download_checkpoints.py", "checkpoint_io.py", "export_onnx.py"]
 exclude = ["bigram.py", ".venv", "**/__pycache__"]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
