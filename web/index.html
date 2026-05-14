@@ -46,6 +46,8 @@
     <label>tokens <input id="ntokens" type="number" value="200" min="1" max="2000" /></label>
     <label>temp <input id="temp" type="number" value="0.5" min="0.1" max="2.0" step="0.1" /></label>
     <label>top-k <input id="topk" type="number" value="40" min="1" max="500" /></label>
+    <label title="Lookahead tree depth. 1 = single-token sampling (top-k applies). ≥2 = expand a depth-N tree of beams, sample one path by joint probability (width applies per level).">depth <input id="depth" type="number" value="3" min="1" max="5" /></label>
+    <label title="Branching factor per level of the lookahead tree. Only used when depth ≥ 2.">width <input id="width" type="number" value="8" min="2" max="8" /></label>
     <button id="go" disabled>loading…</button>
   </div>
   <div id="status">initializing…</div>
