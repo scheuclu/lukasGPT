@@ -36,7 +36,14 @@ async function init() {
     session = await ort.InferenceSession.create("./model.onnx", {
       executionProviders: ["webgpu", "wasm"],
     });
-    status.textContent = `ready · vocab=${chars.length} · block_size=${blockSize}`;
+    // Surface which fast paths are actually available. crossOriginIsolated
+    // implies SharedArrayBuffer works, which lets ORT use multi-threaded
+    // WASM; without it, ORT silently falls back to a slower single thread.
+    const webgpu = "gpu" in navigator;
+    const sab = self.crossOriginIsolated === true;
+    status.textContent =
+      `ready · vocab=${chars.length} · block_size=${blockSize}` +
+      ` · webgpu=${webgpu} · cross-origin-isolated=${sab}`;
     goBtn.textContent = "generate";
     goBtn.disabled = false;
   } catch (err) {
@@ -203,11 +210,19 @@ async function generate(nTokens, temperature, topK, depth, width) {
   goBtn.disabled = false;
 }
 
+// Lookahead is opt-in. When the checkbox is off, depth/width inputs are
+// disabled and the single-step path runs regardless of their values.
+const lookaheadBox = $("use-lookahead");
+lookaheadBox.addEventListener("change", () => {
+  $("depth").disabled = !lookaheadBox.checked;
+  $("width").disabled = !lookaheadBox.checked;
+});
+
 goBtn.addEventListener("click", () => {
   const n = parseInt($("ntokens").value, 10);
   const t = parseFloat($("temp").value);
   const k = parseInt($("topk").value, 10);
-  const d = parseInt($("depth").value, 10);
+  const d = lookaheadBox.checked ? parseInt($("depth").value, 10) : 1;
   const w = parseInt($("width").value, 10);
   generate(n, t, k, d, w).catch((err) => {
     status.textContent = `error: ${err.message}`;

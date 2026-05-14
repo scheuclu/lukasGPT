@@ -18,6 +18,8 @@
     .row { display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
     label { color: var(--muted); font-size: 13px; }
     label[for="prompt"] { display: block; margin-bottom: .25rem; }
+    label.disabled, label:has(input:disabled) { opacity: .45; }
+    input:disabled { cursor: not-allowed; }
     input[type=number] { width: 5rem; padding: .25rem .4rem; }
     button { background: var(--accent); color: white; border: 0; padding: .5rem 1rem;
              border-radius: 4px; cursor: pointer; font: inherit; }
@@ -46,14 +48,21 @@
     <label>tokens <input id="ntokens" type="number" value="200" min="1" max="2000" /></label>
     <label>temp <input id="temp" type="number" value="0.5" min="0.1" max="2.0" step="0.1" /></label>
     <label>top-k <input id="topk" type="number" value="40" min="1" max="500" /></label>
-    <label title="Lookahead tree depth. 1 = single-token sampling (top-k applies). ≥2 = expand a depth-N tree of beams, sample one path by joint probability (width applies per level).">depth <input id="depth" type="number" value="3" min="1" max="5" /></label>
-    <label title="Branching factor per level of the lookahead tree. Only used when depth ≥ 2.">width <input id="width" type="number" value="8" min="2" max="8" /></label>
+    <label title="When enabled: at each round, expand a depth-N width-K tree of beams and sample one path by joint probability. Slower but more coherent."><input id="use-lookahead" type="checkbox" /> lookahead</label>
+    <label title="Lookahead tree depth. Higher = more planning, much slower (cost scales as width^depth).">depth <input id="depth" type="number" value="3" min="1" max="5" disabled /></label>
+    <label title="Branching factor per level of the lookahead tree.">width <input id="width" type="number" value="8" min="2" max="8" disabled /></label>
     <button id="go" disabled>loading…</button>
   </div>
   <div id="status">initializing…</div>
   <div id="output"></div>
   <p class="stats" id="stats"></p>
 
+  <!-- Service worker that injects COOP/COEP response headers, enabling
+       SharedArrayBuffer (and thus multi-threaded WASM in onnxruntime-web)
+       on hosts like GitHub Pages where we can't set the headers ourselves.
+       First load silently reloads once to activate the SW; after that,
+       crossOriginIsolated is true. -->
+  <script src="https://cdn.jsdelivr.net/gh/gzuidhof/coi-serviceworker@v0.1.7/coi-serviceworker.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort.min.js"></script>
   <script src="./main.js"></script>
 </body>
