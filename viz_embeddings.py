@@ -13,7 +13,9 @@ import streamlit as st
 import torch
 
 from gpt import GPTLanguageModel, Hyperparameters, load_model_from_checkpoint
+import tokenizers as tok
 from tokenizers import CharTokenizer
+from tokenizers.base import Tokenizer
 
 CKPT_DIR = "checkpoints"
 
@@ -90,6 +92,23 @@ def load_model(path: str) -> tuple[GPTLanguageModel, list[str], Hyperparameters,
             f"the embedding viz only supports char-level checkpoints."
         )
     return model, tokenizer.chars, hp, device
+
+
+@st.cache_data(show_spinner=False)
+def load_tokenizer(path: str) -> Tokenizer:
+    """Lightweight loader: pulls just the tokenizer state out of a
+    checkpoint without instantiating the model. Works for both char and
+    BPE checkpoints, plus legacy `chars`-only files."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    if "tokenizer_type" in ckpt and "tokenizer_state" in ckpt:
+        t = tok.get(ckpt["tokenizer_type"])
+        t.load_state_dict(ckpt["tokenizer_state"])
+    elif "chars" in ckpt:
+        t = tok.get("char")
+        t.load_state_dict({"chars": ckpt["chars"]})
+    else:
+        raise ValueError(f"{os.path.basename(path)} has no tokenizer info")
+    return t
 
 
 @torch.no_grad()
@@ -302,53 +321,118 @@ with st.sidebar:
         default=list(CATEGORY_COLORS.keys()),
     )
 
-chars, tok_w, pos_w = load_checkpoint(ckpt_path)
+tokenizer = load_tokenizer(ckpt_path)
+
+# Embedding-based tabs need the model weight matrices and are
+# char-tokenizer-only. For BPE checkpoints we'll show the tokens tab
+# anyway and disable the rest.
+chars: list[str] | None = None
+tok_w: torch.Tensor | None = None
+pos_w: torch.Tensor | None = None
+try:
+    chars, tok_w, pos_w = load_checkpoint(ckpt_path)
+except ValueError as e:
+    st.warning(str(e))
 
 c1, c2, c3 = st.columns(3)
-c1.metric("vocab size", len(chars))
-c2.metric("token emb dim", tok_w.shape[1])
-c3.metric("block size", pos_w.shape[0])
+c1.metric("vocab size", tokenizer.vocab_size)
+c2.metric("tokenizer", tokenizer.name)
+c3.metric("block size", pos_w.shape[0] if pos_w is not None else "?")
 
-tab3d, tab2d, tab_sim, tab_pos, tab_resid = st.tabs(
-    ["3D tokens", "2D tokens", "Similarity heatmap", "Positions", "Residual stream"]
+tab_tokens, tab3d, tab2d, tab_sim, tab_pos, tab_resid = st.tabs(
+    ["Tokens", "3D tokens", "2D tokens", "Similarity heatmap", "Positions", "Residual stream"]
 )
 
-with tab3d:
-    coords = pca(tok_w, 3)
-    st.plotly_chart(
-        token_scatter(coords, chars, dim=3,
-                      selected_cats=selected_cats, show_labels=show_labels),
-        use_container_width=True,
+
+def _embedding_only(label: str) -> None:
+    st.info(
+        f"The **{label}** tab visualizes the learned token embedding "
+        f"matrix, which only has a meaningful per-character interpretation "
+        f"for `char` tokenizers. This checkpoint uses `{tokenizer.name}`."
     )
-    st.caption("Drag to rotate, scroll to zoom. Each point is one character "
-               "of the vocabulary projected into the top-3 principal components "
-               "of the learned token embedding matrix.")
+
+
+with tab_tokens:
+    st.markdown(
+        f"Vocabulary learned by this checkpoint's `{tokenizer.name}` tokenizer. "
+        f"For BPE, each row is a byte sequence merged out of more frequent "
+        f"adjacent pairs during training; for char, each row is one character "
+        f"that appeared in the training corpus."
+    )
+    rows: list[dict[str, int | str]] = []
+    for token_id in range(tokenizer.vocab_size):
+        s = tokenizer.decode([token_id])
+        rows.append({
+            "id": token_id,
+            "token": repr(s),
+            "chars": len(s),
+            "bytes": len(s.encode("utf-8")),
+        })
+    st.dataframe(rows, use_container_width=True, height=600, hide_index=True)
+    if tokenizer.vocab_size > 256:
+        # BPE token-length histogram — char-level is uninteresting (all 1s).
+        from collections import Counter
+        length_counts: Counter[int] = Counter(int(r["chars"]) for r in rows)
+        xs: list[int] = sorted(length_counts)
+        ys: list[int] = [length_counts[x] for x in xs]
+        fig = go.Figure(data=go.Bar(x=xs, y=ys))
+        fig.update_layout(template="plotly_white",
+                          title="Token length distribution (chars)",
+                          xaxis_title="length", yaxis_title="count",
+                          height=300, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab3d:
+    if chars is None or tok_w is None:
+        _embedding_only("3D tokens")
+    else:
+        coords = pca(tok_w, 3)
+        st.plotly_chart(
+            token_scatter(coords, chars, dim=3,
+                          selected_cats=selected_cats, show_labels=show_labels),
+            use_container_width=True,
+        )
+        st.caption("Drag to rotate, scroll to zoom. Each point is one character "
+                   "of the vocabulary projected into the top-3 principal components "
+                   "of the learned token embedding matrix.")
 
 with tab2d:
-    coords = pca(tok_w, 2)
-    st.plotly_chart(
-        token_scatter(coords, chars, dim=2,
-                      selected_cats=selected_cats, show_labels=True),
-        use_container_width=True,
-    )
-    st.caption("Same data as the 3D view, projected to the top-2 PCs.")
+    if chars is None or tok_w is None:
+        _embedding_only("2D tokens")
+    else:
+        coords = pca(tok_w, 2)
+        st.plotly_chart(
+            token_scatter(coords, chars, dim=2,
+                          selected_cats=selected_cats, show_labels=True),
+            use_container_width=True,
+        )
+        st.caption("Same data as the 3D view, projected to the top-2 PCs.")
 
 with tab_sim:
-    st.plotly_chart(similarity_heatmap(tok_w, chars), use_container_width=True)
-    st.caption("Cosine similarity between every pair of token embedding rows. "
-               "Red = similar direction, blue = opposite. Hover for the pair "
-               "and exact value.")
+    if chars is None or tok_w is None:
+        _embedding_only("Similarity heatmap")
+    else:
+        st.plotly_chart(similarity_heatmap(tok_w, chars), use_container_width=True)
+        st.caption("Cosine similarity between every pair of token embedding rows. "
+                   "Red = similar direction, blue = opposite. Hover for the pair "
+                   "and exact value.")
 
 with tab_pos:
-    pos_dim = st.radio("dimensions", options=[3, 2], horizontal=True, index=0)
-    coords = pca(pos_w, pos_dim)
-    st.plotly_chart(position_scatter(coords, dim=pos_dim),
-                    use_container_width=True)
-    st.caption("Learned position embeddings, colored by position index and "
-               "connected in order. A smooth path means the model learned a "
-               "continuous notion of position.")
+    if pos_w is None:
+        _embedding_only("Positions")
+    else:
+        pos_dim = st.radio("dimensions", options=[3, 2], horizontal=True, index=0)
+        coords = pca(pos_w, pos_dim)
+        st.plotly_chart(position_scatter(coords, dim=pos_dim),
+                        use_container_width=True)
+        st.caption("Learned position embeddings, colored by position index and "
+                   "connected in order. A smooth path means the model learned a "
+                   "continuous notion of position.")
 
 with tab_resid:
+    if not isinstance(tokenizer, CharTokenizer):
+        _embedding_only("Residual stream")
+        st.stop()
     st.markdown(
         "Each prompt is encoded character-by-character and run through the "
         "model. We grab the residual stream at the chosen layer at the "

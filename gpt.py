@@ -1,7 +1,10 @@
 import argparse
 import json
+import multiprocessing as mp
 import os
+import time
 from datetime import datetime
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -304,6 +307,67 @@ def load_model_from_checkpoint(
     return model, tokenizer, hp
 
 
+# Module-level worker state. multiprocessing.Pool's initializer runs once per
+# worker process and stashes the tokenizer here so each task call doesn't
+# need to (re)pickle it.
+_worker_tokenizer: Tokenizer | None = None
+
+
+def _init_worker(tok_type: str, tok_state: dict[str, Any]) -> None:
+    global _worker_tokenizer
+    _worker_tokenizer = tok.get(tok_type)
+    _worker_tokenizer.load_state_dict(tok_state)
+
+
+def _encode_one_chunk(chunk: str) -> list[int]:
+    assert _worker_tokenizer is not None
+    return _worker_tokenizer.encode(chunk)
+
+
+def _encode_corpus_with_progress(
+    text: str, tokenizer: Tokenizer, n_chunks: int = 200, n_workers: int | None = None
+) -> torch.Tensor:
+    """Encode `text` through `tokenizer` in roughly-equal-sized chunks, in
+    parallel across processes. Functionally equivalent to
+    `tokenizer.encode(text)` except for at most ~n_chunks tokens of slop
+    at chunk boundaries — negligible against a corpus of millions of
+    tokens, and the alternative is staring at a frozen prompt for hours
+    on the BPE path.
+    """
+    chunk_size = max(1, len(text) // n_chunks)
+    chunks = [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+    if n_workers is None:
+        n_workers = min(len(chunks), mp.cpu_count())
+
+    encoded: list[int] = []
+    total_mb = len(text) / 1e6
+    t0 = time.time()
+    report_every = max(1, len(chunks) // 50)
+    print(f"  encoding {len(chunks)} chunks across {n_workers} workers")
+    with mp.Pool(
+        processes=n_workers,
+        initializer=_init_worker,
+        initargs=(tokenizer.name, tokenizer.state_dict()),
+    ) as pool:
+        # imap preserves input order, so concatenation gives us back the
+        # original text's token sequence (modulo cross-chunk slop).
+        for i, result in enumerate(pool.imap(_encode_one_chunk, chunks)):
+            encoded.extend(result)
+            if (i + 1) % report_every == 0 or i + 1 == len(chunks):
+                done = (i + 1) / len(chunks)
+                elapsed = time.time() - t0
+                eta = elapsed * (1 - done) / done if done > 0 else 0.0
+                print(
+                    f"\r  encoding: {done * 100:5.1f}% · "
+                    f"{done * total_mb:5.1f}/{total_mb:.1f} MB · "
+                    f"{elapsed:4.0f}s elapsed · ETA {eta:4.0f}s",
+                    end="", flush=True,
+                )
+    print()
+    return torch.tensor(encoded, dtype=torch.long)
+
+
 def _main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     checkpoint_dir = "checkpoints"
@@ -415,9 +479,10 @@ def _main() -> None:
     print(f"  vocab_size={tokenizer.vocab_size}")
     vocab_size = tokenizer.vocab_size
 
-    # Encoding the full corpus through naive BPE is slow (~minutes), so we
-    # cache the result to disk keyed on dataset + tokenizer config. The
-    # cached file also stores the tokenizer state to detect staleness.
+    # Encoding the full corpus through naive BPE is slow (tens of minutes
+    # on Gutenberg), so we cache the result to disk keyed on dataset +
+    # tokenizer config. The cached file also stores the tokenizer state
+    # to detect staleness.
     cache_id = (
         f"{tokenizer.name}_v{tokenizer.vocab_size}"
         if tokenizer.name != "char"
@@ -432,11 +497,11 @@ def _main() -> None:
             data = cache["data"]
         else:
             print(f"  cache at {cache_path} is stale, re-encoding")
-            data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+            data = _encode_corpus_with_progress(text, tokenizer)
             torch.save({"tokenizer_state": cached_state, "data": data}, cache_path)
     else:
         print(f"encoding corpus ({len(text):,} chars) — this can take a while for bpe")
-        data = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+        data = _encode_corpus_with_progress(text, tokenizer)
         torch.save({"tokenizer_state": cached_state, "data": data}, cache_path)
         print(f"  cached encoded corpus to {cache_path}")
     n = int(0.9 * len(data))
@@ -506,69 +571,86 @@ def _main() -> None:
         writer.add_histogram("token_distribution", data, 0)
         print(f"tensorboard: logging to {log_dir}")
 
-    for iter in range(hp.max_iters):
-        if iter % hp.eval_interval == 0 or iter == hp.max_iters - 1:
-            losses = estimate_loss()
-            print(
-                f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
-            )
-            if writer is not None:
-                writer.add_scalar("loss/train", losses["train"].item(), iter)
-                writer.add_scalar("loss/val", losses["val"].item(), iter)
-                if not args.no_sample:
-                    model.eval()
-                    with torch.no_grad():
-                        ctx = torch.zeros((1, 1), dtype=torch.long, device=device)
-                        sample = model.generate(ctx, max_new_tokens=200)
-                    model.train()
-                    writer.add_text(
-                        "sample", f"```\n{tokenizer.decode(sample[0].tolist())}\n```", iter
-                    )
-            ckpt_path = os.path.join(
-                checkpoint_dir,
-                f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
-            )
-            ckpt_payload: dict[str, object] = {
-                "iter": iter,
-                "profile": ACTIVE_PROFILE,
-                "model": model.state_dict(),
-                "train_loss": losses["train"].item(),
-                "val_loss": losses["val"].item(),
-                "tokenizer_type": tokenizer.name,
-                "tokenizer_state": tokenizer.state_dict(),
-                "hparams": hp.architecture_dict(),
-            }
-            # Keep `chars` for backwards compat with viz_embeddings /
-            # export_onnx / the published checkpoints — only meaningful for
-            # the char tokenizer.
-            if isinstance(tokenizer, tok.CharTokenizer):
-                ckpt_payload["chars"] = tokenizer.chars
-            torch.save(ckpt_payload, ckpt_path)
-            print(f"  saved checkpoint to {ckpt_path}")
+    last_saved_step: int | None = None
+    interrupted = False
+    try:
+        for iter in range(hp.max_iters):
+            if iter % hp.eval_interval == 0 or iter == hp.max_iters - 1:
+                losses = estimate_loss()
+                print(
+                    f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
+                )
+                if writer is not None:
+                    writer.add_scalar("loss/train", losses["train"].item(), iter)
+                    writer.add_scalar("loss/val", losses["val"].item(), iter)
+                    if not args.no_sample:
+                        model.eval()
+                        with torch.no_grad():
+                            ctx = torch.zeros((1, 1), dtype=torch.long, device=device)
+                            sample = model.generate(ctx, max_new_tokens=200)
+                        model.train()
+                        writer.add_text(
+                            "sample",
+                            f"```\n{tokenizer.decode(sample[0].tolist())}\n```",
+                            iter,
+                        )
+                ckpt_path = os.path.join(
+                    checkpoint_dir,
+                    f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
+                )
+                ckpt_payload: dict[str, object] = {
+                    "iter": iter,
+                    "profile": ACTIVE_PROFILE,
+                    "model": model.state_dict(),
+                    "train_loss": losses["train"].item(),
+                    "val_loss": losses["val"].item(),
+                    "tokenizer_type": tokenizer.name,
+                    "tokenizer_state": tokenizer.state_dict(),
+                    "hparams": hp.architecture_dict(),
+                }
+                # Keep `chars` for backwards compat with viz_embeddings /
+                # export_onnx / the published checkpoints — only meaningful for
+                # the char tokenizer.
+                if isinstance(tokenizer, tok.CharTokenizer):
+                    ckpt_payload["chars"] = tokenizer.chars
+                torch.save(ckpt_payload, ckpt_path)
+                last_saved_step = iter
+                print(f"  saved checkpoint to {ckpt_path}")
 
-        xb, yb = get_batch("train")
-        logits, loss = model(xb, yb)
-        assert loss is not None
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+            xb, yb = get_batch("train")
+            logits, loss = model(xb, yb)
+            assert loss is not None
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+    except KeyboardInterrupt:
+        interrupted = True
+        print()
+        print("training interrupted by user (Ctrl-C)")
+        if last_saved_step is None:
+            print("  no checkpoint saved yet; nothing to upload")
+        else:
+            print(f"  last saved checkpoint: step {last_saved_step}")
 
     if writer is not None:
         writer.close()
 
-    context = torch.zeros((1, 1), dtype=torch.long, device=device)
-    print(
-        tokenizer.decode(
-            model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()
+    # Only run the final-generation sample on clean completion; on Ctrl-C the
+    # user wants to get out, not wait for 500 tokens of inference.
+    if not interrupted:
+        context = torch.zeros((1, 1), dtype=torch.long, device=device)
+        print(
+            tokenizer.decode(
+                model.generate(context, max_new_tokens=args.max_new_tokens)[0].tolist()
+            )
         )
-    )
 
-    if args.no_upload:
+    if args.no_upload or last_saved_step is None:
         return
 
     repo = args.upload_repo or manifest_repo()
     sha = git_sha()
-    final_step = hp.max_iters - 1
+    final_step = last_saved_step
     final_ckpt = os.path.join(
         checkpoint_dir,
         f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}.pt",

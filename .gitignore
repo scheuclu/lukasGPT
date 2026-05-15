@@ -5,7 +5,7 @@ checkpoints/
 viz/
 input.txt
 input_shakespeare.txt
-input_gutenberg.txt
+input_gutenberg*.txt
 *.cache.pt
 donotcommit.txt
 runs/
