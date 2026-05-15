@@ -45,6 +45,26 @@ Downloads verify sha256 and skip files that are already present.
 
 Switch profiles by editing `ACTIVE_PROFILE` in `gpt.py`. Each checkpoint embeds the architecture and vocab so it's self-contained for inference.
 
+### Tokenizer
+
+The training script supports two tokenizers:
+
+```bash
+uv run python gpt.py --tokenizer char                          # default; one token per character
+uv run python gpt.py --tokenizer bpe --tokenizer-vocab-size 1024  # byte-level BPE (minbpe-style)
+```
+
+`char` keeps the original behavior: vocab = unique characters in the corpus (~85–250). `bpe` trains byte-pair merges on a 5 MB prefix of the corpus and gives you ~3–4× sequence compression on English, so `block_size=512` covers ~1.5–2k chars of real context. The encoded corpus is cached to disk (`{dataset_path}.{tokenizer}_v{vocab_size}.cache.pt`) keyed on the tokenizer state, since naive-Python BPE encoding of a 2 GB corpus takes minutes.
+
+Checkpoints store the tokenizer state, so inference reconstructs the exact same tokenizer:
+
+```bash
+uv run python gpt.py --infer checkpoints/ckpt_default_step_04999.pt
+#   tokenizer: bpe (vocab=1024)
+```
+
+Legacy checkpoints (only `chars` saved) load through a compatibility path as if they were `char` checkpoints — nothing breaks.
+
 ## Monitoring with TensorBoard
 
 Each training run writes scalar loss curves and a 200-character text sample at every eval step to `./runs/<timestamp>_<profile>_<dataset>/`. Disable with `--no-tensorboard`, or keep the curves but skip generation with `--no-sample` (worth it on the `large` profile).
@@ -109,6 +129,7 @@ The sidebar lets you scrub across training-step checkpoints and watch the embedd
 ## Layout
 
 - `gpt.py` — the transformer, training loop, inference, and lookahead sampling
+- `tokenizers/` — char and byte-level BPE tokenizer classes (local package; not HuggingFace's)
 - `bigram.py` — the tiny bigram baseline from earlier in the lecture
 - `viz_embeddings.py` — Streamlit embedding viewer
 - `checkpoint_io.py` — shared helpers for checkpoint files (sha256, git SHA tag, HF Hub upload, manifest)

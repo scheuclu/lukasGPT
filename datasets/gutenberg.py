@@ -8,8 +8,10 @@ books / ~2 GB, comparable to TinyStories) and concatenate them.
 
 import os
 import re
+import time
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 from huggingface_hub import (
     hf_hub_download,  # pyright: ignore[reportUnknownVariableType]
@@ -29,15 +31,30 @@ PG19_MANIFEST_REPO = "deepmind/pg19"
 PG19_MANIFEST_FILE = "data/train_files.txt"
 
 
+def _fetch_book(rel: str) -> str:
+    """Download one book from GCS, strip the trailing license footer if
+    present, and normalize trailing whitespace. Network-bound; safe to
+    run in many threads concurrently."""
+    with urllib.request.urlopen(PG19_GCS_BASE + rel) as r:
+        raw = r.read().decode("utf-8", errors="replace")
+    m = _END_MARKER.search(raw)
+    if m:
+        raw = raw[: m.start()]
+    return raw.strip() + "\n\n"
+
+
 class Gutenberg(Dataset):
     name = "gutenberg"
     url = PG19_GCS_BASE
-    default_path = "input_gutenberg.txt"
+    default_path = "input_gutenberg_10k.txt"
     description = (
         "DeepMind PG-19 subset (Project Gutenberg books pre-1919). "
-        "First 3000 books, ~2 GB. Set max_books=None to download all 28,602."
+        "First 10000 books, ~7 GB. Set max_books=None to download all 28,602."
     )
-    max_books: int | None = 3000
+    max_books: int | None = 10000
+    # Network-bound; 32 concurrent connections is comfortable against GCS
+    # and gets us roughly an order-of-magnitude speedup over sequential.
+    download_workers: int = 32
 
     def prepare(self, path: str | None = None) -> str:
         path = path or self.default_path
@@ -55,25 +72,32 @@ class Gutenberg(Dataset):
         if self.max_books is not None:
             book_paths = book_paths[: self.max_books]
 
-        print(f"downloading {len(book_paths):,} PG-19 books to {path}")
+        print(
+            f"downloading {len(book_paths):,} PG-19 books to {path} "
+            f"({self.download_workers} workers in parallel)"
+        )
         tmp = f"{path}.partial"
         chars = 0
+        t0 = time.time()
         with open(tmp, "w", encoding="utf-8") as out:
-            for i, rel in enumerate(book_paths):
-                with urllib.request.urlopen(PG19_GCS_BASE + rel) as r:
-                    raw = r.read().decode("utf-8", errors="replace")
-                m = _END_MARKER.search(raw)
-                if m:
-                    raw = raw[: m.start()]
-                block = raw.strip() + "\n\n"
-                out.write(block)
-                chars += len(block)
-                if (i + 1) % 50 == 0 or i + 1 == len(book_paths):
-                    print(
-                        f"\r  {i + 1}/{len(book_paths)} books · {chars / 1e9:.2f} GB",
-                        end="",
-                        flush=True,
-                    )
+            with ThreadPoolExecutor(max_workers=self.download_workers) as ex:
+                # executor.map preserves submission order, so the file is
+                # written in book_paths order even though fetches finish
+                # out of order across worker threads.
+                for i, block in enumerate(ex.map(_fetch_book, book_paths)):
+                    out.write(block)
+                    chars += len(block)
+                    if (i + 1) % 50 == 0 or i + 1 == len(book_paths):
+                        done = (i + 1) / len(book_paths)
+                        elapsed = time.time() - t0
+                        eta = elapsed * (1 - done) / done if done > 0 else 0.0
+                        print(
+                            f"\r  {i + 1}/{len(book_paths)} books · "
+                            f"{chars / 1e9:.2f} GB · "
+                            f"{elapsed:4.0f}s elapsed · ETA {eta:4.0f}s",
+                            end="",
+                            flush=True,
+                        )
         print()
 
         with open(tmp, "r", encoding="utf-8") as f:
