@@ -30,13 +30,35 @@ PG19_GCS_BASE = "https://storage.googleapis.com/deepmind-gutenberg/"
 PG19_MANIFEST_REPO = "deepmind/pg19"
 PG19_MANIFEST_FILE = "data/train_files.txt"
 
+# Per-book disk cache so a crash midway through a 10K-book download doesn't
+# force a re-download of everything. Each book ends up at
+# pg19_books_cache/<train|val|test>/<id>.txt and stays there forever.
+PG19_CACHE_DIR = "pg19_books_cache"
+
 
 def _fetch_book(rel: str) -> str:
-    """Download one book from GCS, strip the trailing license footer if
-    present, and normalize trailing whitespace. Network-bound; safe to
-    run in many threads concurrently."""
-    with urllib.request.urlopen(PG19_GCS_BASE + rel) as r:
-        raw = r.read().decode("utf-8", errors="replace")
+    """Return one book's text, strip the trailing license footer if
+    present, and normalize trailing whitespace. Reads from
+    PG19_CACHE_DIR first; otherwise downloads from GCS and writes the
+    raw text into the cache atomically via tmp+rename.
+
+    Network-bound but threadsafe: each invocation writes to a unique
+    `<cache>/<rel>.tmp` then renames into place, so concurrent threads
+    on different books don't race.
+    """
+    cache_path = os.path.join(PG19_CACHE_DIR, rel)
+    if os.path.exists(cache_path):
+        with open(cache_path, "r", encoding="utf-8") as f:
+            raw = f.read()
+    else:
+        with urllib.request.urlopen(PG19_GCS_BASE + rel) as r:
+            raw = r.read().decode("utf-8", errors="replace")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        tmp = cache_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(raw)
+        os.rename(tmp, cache_path)
+
     m = _END_MARKER.search(raw)
     if m:
         raw = raw[: m.start()]
@@ -52,9 +74,9 @@ class Gutenberg(Dataset):
         "First 10000 books, ~7 GB. Set max_books=None to download all 28,602."
     )
     max_books: int | None = 10000
-    # Network-bound; 32 concurrent connections is comfortable against GCS
-    # and gets us roughly an order-of-magnitude speedup over sequential.
-    download_workers: int = 32
+    # Network-bound; 8 concurrent connections is plenty against GCS and
+    # less likely to trip rate limits or saturate the local NIC.
+    download_workers: int = 8
 
     def prepare(self, path: str | None = None) -> str:
         path = path or self.default_path

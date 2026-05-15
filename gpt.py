@@ -34,8 +34,8 @@ class Hyperparameters(BaseModel):
     # then ReduceLROnPlateau — multiply lr by lr_factor whenever val loss
     # hasn't improved by lr_threshold for lr_patience eval intervals.
     # Bottoms out at min_lr.
-    learning_rate: float = 6e-4
-    min_lr: float = 6e-5
+    learning_rate: float = 1e-3
+    min_lr: float = 1e-4
     warmup_iters: int = 100
     lr_factor: float = 0.5
     lr_patience: int = 3

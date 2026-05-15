@@ -6,6 +6,7 @@ viz/
 input.txt
 input_shakespeare.txt
 input_gutenberg*.txt
+pg19_books_cache/
 *.cache.pt
 donotcommit.txt
 runs/
