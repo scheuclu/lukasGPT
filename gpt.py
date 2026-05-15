@@ -23,7 +23,7 @@ class Hyperparameters(BaseModel):
     n_embd: int = 384
     n_head: int = 6
     n_layer: int = 6
-    block_size: int = 512
+    block_size: int = 2048
     dropout: float = 0.2
     # Training (not persisted; only used in the training branch)
     batch_size: int = 128
@@ -184,10 +184,7 @@ class GPTLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, hp.n_embd)
         self.position_embedding_table = nn.Embedding(hp.block_size, hp.n_embd)
         self.blocks = nn.Sequential(
-            *[
-                Block(hp.n_embd, hp.n_head, hp.dropout)
-                for _ in range(hp.n_layer)
-            ]
+            *[Block(hp.n_embd, hp.n_head, hp.dropout) for _ in range(hp.n_layer)]
         )
         self.ln_f = nn.LayerNorm(hp.n_embd)
         self.lm_head = nn.Linear(hp.n_embd, vocab_size)
@@ -311,7 +308,9 @@ def load_model_from_checkpoint(
         tokenizer = tok.get("char")
         tokenizer.load_state_dict({"chars": ckpt["chars"]})
     else:
-        raise ValueError(f"checkpoint {path} missing tokenizer info ('chars' or 'tokenizer_state')")
+        raise ValueError(
+            f"checkpoint {path} missing tokenizer info ('chars' or 'tokenizer_state')"
+        )
 
     hp = Hyperparameters(**ckpt["hparams"])
     model = GPTLanguageModel(hp, vocab_size=tokenizer.vocab_size).to(device)
@@ -378,7 +377,8 @@ def _encode_corpus_with_progress(
                     f"\r  encoding: {done * 100:5.1f}% · "
                     f"{done * total_mb:5.1f}/{total_mb:.1f} MB · "
                     f"{elapsed:4.0f}s elapsed · ETA {eta:4.0f}s",
-                    end="", flush=True,
+                    end="",
+                    flush=True,
                 )
     print()
     return torch.tensor(encoded, dtype=torch.long)
