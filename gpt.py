@@ -30,7 +30,16 @@ class Hyperparameters(BaseModel):
     max_iters: int = 5000
     eval_interval: int = 25
     eval_iters: int = 200
-    learning_rate: float = 3e-4
+    # LR schedule: linear warmup from 0 to learning_rate over warmup_iters,
+    # then ReduceLROnPlateau — multiply lr by lr_factor whenever val loss
+    # hasn't improved by lr_threshold for lr_patience eval intervals.
+    # Bottoms out at min_lr.
+    learning_rate: float = 6e-4
+    min_lr: float = 6e-5
+    warmup_iters: int = 100
+    lr_factor: float = 0.5
+    lr_patience: int = 3
+    lr_threshold: float = 1e-3
 
     @model_validator(mode="after")
     def _check(self) -> "Hyperparameters":
@@ -38,6 +47,13 @@ class Hyperparameters(BaseModel):
             f"n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})"
         )
         return self
+
+    def warmup_lr(self, iter_num: int) -> float | None:
+        """LR during warmup, or None once warmup is over and the
+        plateau scheduler takes over."""
+        if iter_num < self.warmup_iters:
+            return self.learning_rate * (iter_num + 1) / (self.warmup_iters + 1)
+        return None
 
     def architecture_dict(self) -> dict[str, int | float]:
         return {
@@ -545,6 +561,17 @@ def _main() -> None:
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=hp.learning_rate)
+    # Plateau scheduler: drop lr only when val loss stops improving. We
+    # also do a manual linear warmup over the first `warmup_iters` steps,
+    # before letting this scheduler take over.
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=hp.lr_factor,
+        patience=hp.lr_patience,
+        threshold=hp.lr_threshold,
+        min_lr=hp.min_lr,
+    )
 
     writer: SummaryWriter | None = None
     if not args.no_tensorboard:
@@ -575,14 +602,35 @@ def _main() -> None:
     interrupted = False
     try:
         for iter in range(hp.max_iters):
+            # During warmup, overwrite the optimizer's lr manually. After
+            # warmup, the scheduler owns it (it modifies param_groups in
+            # place when it decides to step down).
+            warmup = hp.warmup_lr(iter)
+            if warmup is not None:
+                for pg in optimizer.param_groups:
+                    pg["lr"] = warmup
+
             if iter % hp.eval_interval == 0 or iter == hp.max_iters - 1:
                 losses = estimate_loss()
+                val_loss = losses["val"].item()
+                lr_before = optimizer.param_groups[0]["lr"]
+                # Let the plateau scheduler decide whether to drop lr,
+                # but not during warmup — its internal "best so far"
+                # tracking shouldn't see the early ramp-up noise.
+                if iter >= hp.warmup_iters:
+                    scheduler.step(val_loss)
+                lr_now = optimizer.param_groups[0]["lr"]
+                if lr_now < lr_before:
+                    print(
+                        f"  lr reduced: {lr_before:.2e} → {lr_now:.2e} (val loss plateau)"
+                    )
                 print(
-                    f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}"
+                    f"step {iter}: train loss {losses['train']:.4f}, val loss {val_loss:.4f}, lr {lr_now:.2e}"
                 )
                 if writer is not None:
                     writer.add_scalar("loss/train", losses["train"].item(), iter)
-                    writer.add_scalar("loss/val", losses["val"].item(), iter)
+                    writer.add_scalar("loss/val", val_loss, iter)
+                    writer.add_scalar("lr", lr_now, iter)
                     if not args.no_sample:
                         model.eval()
                         with torch.no_grad():
