@@ -14,11 +14,35 @@ const status = $("status");
 const output = $("output");
 const stats = $("stats");
 const goBtn = $("go");
+const promptPreview = $("prompt-preview");
 
 let session = null;
 let chars = null;
 let stoi = null;
 let blockSize = 0;
+
+const TOK_COLORS = 6; // matches .tok-0..tok-5 in index.html
+
+// Append one token as a colored <span> to `container`. colorIdx cycles
+// through the six token-color CSS classes so adjacent tokens get
+// distinguishable backgrounds. `primer=true` adds an underline so
+// user-typed tokens are visually distinct from model-generated ones.
+function appendTokenSpan(container, tokenId, colorIdx, primer) {
+  const span = document.createElement("span");
+  span.className =
+    `tok tok-${colorIdx % TOK_COLORS}` + (primer ? " primer-tok" : "");
+  span.textContent = chars[tokenId];
+  container.appendChild(span);
+}
+
+// Re-render the small "tokenized prompt" preview below the input on
+// every keystroke. Skips silently before the vocab has loaded.
+function renderPromptPreview() {
+  promptPreview.innerHTML = "";
+  if (!stoi) return;
+  const { tokens } = encodePrompt($("prompt").value);
+  tokens.forEach((t, i) => appendTokenSpan(promptPreview, t, i, false));
+}
 
 async function init() {
   try {
@@ -30,6 +54,10 @@ async function init() {
     if (meta.checkpoint) {
       $("ckpt-info").textContent = `checkpoint: ${meta.checkpoint}`;
     }
+    // Render the prompt preview now (vocab is enough), before the slow
+    // ONNX model fetch. User sees colored tokens immediately rather
+    // than waiting through the ~10s model load.
+    renderPromptPreview();
 
     status.textContent = `loading model (this is the big one — ~${"40 MB"})…`;
     // Prefer WebGPU; fall back to WASM.
@@ -106,13 +134,15 @@ async function forwardProbs(seq) {
 }
 
 // Single-step sampling: at each iteration, run the model once, sample one
-// token with temperature + top-k.
-async function generateSingleStep(tokens, nTokens, temperature, topK) {
+// token with temperature + top-k. `cycle` is a {i: int} so the color
+// counter keeps incrementing across the primer/generated boundary.
+async function generateSingleStep(tokens, nTokens, temperature, topK, cycle) {
   for (let step = 0; step < nTokens; step++) {
     const probs = await forwardProbs(tokens);
     const next = sample(probs, temperature, topK);
     tokens.push(next);
-    output.appendChild(document.createTextNode(chars[next]));
+    appendTokenSpan(output, next, cycle.i, false);
+    cycle.i++;
     if (step % 8 === 0) await new Promise((r) => setTimeout(r, 0));
   }
 }
@@ -121,7 +151,7 @@ async function generateSingleStep(tokens, nTokens, temperature, topK) {
 // branching factor `width`, then sample one full path proportional to its
 // joint (sum of per-step log) probability, and commit all of its tokens.
 // Mirrors GPTLanguageModel.generate_lookahead in gpt.py.
-async function generateLookahead(tokens, nTokens, temperature, depth, width) {
+async function generateLookahead(tokens, nTokens, temperature, depth, width, cycle) {
   let generated = 0;
   while (generated < nTokens) {
     const commit = Math.min(depth, nTokens - generated);
@@ -166,7 +196,8 @@ async function generateLookahead(tokens, nTokens, temperature, depth, width) {
     const path = leaves[chosen].slice(-commit);
     for (const t of path) {
       tokens.push(t);
-      output.appendChild(document.createTextNode(chars[t]));
+      appendTokenSpan(output, t, cycle.i, false);
+      cycle.i++;
     }
     generated += commit;
   }
@@ -183,13 +214,13 @@ async function generate(nTokens, temperature, topK, depth, width) {
   // torch.zeros((1,1)) starting context).
   const tokens = promptTokens.length > 0 ? [...promptTokens] : [0];
 
-  // Render the prompt prefix in a distinct color so it's clear what
-  // the model generated vs what we primed it with.
-  if (promptTokens.length > 0) {
-    const primer = document.createElement("span");
-    primer.className = "primer";
-    primer.textContent = promptTokens.map((t) => chars[t]).join("");
-    output.appendChild(primer);
+  // Render each primer token as a colored span (with underline), and
+  // keep a running color counter so generated tokens continue the
+  // cycle without restarting at zero.
+  const cycle = { i: 0 };
+  for (const t of promptTokens) {
+    appendTokenSpan(output, t, cycle.i, true);
+    cycle.i++;
   }
   if (missing.size > 0) {
     const oov = [...missing].map((c) => JSON.stringify(c)).join(", ");
@@ -198,9 +229,9 @@ async function generate(nTokens, temperature, topK, depth, width) {
 
   const t0 = performance.now();
   if (depth > 1) {
-    await generateLookahead(tokens, nTokens, temperature, depth, width);
+    await generateLookahead(tokens, nTokens, temperature, depth, width, cycle);
   } else {
-    await generateSingleStep(tokens, nTokens, temperature, topK);
+    await generateSingleStep(tokens, nTokens, temperature, topK, cycle);
   }
 
   const elapsed = (performance.now() - t0) / 1000;
@@ -217,6 +248,9 @@ lookaheadBox.addEventListener("change", () => {
   $("depth").disabled = !lookaheadBox.checked;
   $("width").disabled = !lookaheadBox.checked;
 });
+
+// Live update the tokenized-prompt preview as the user types.
+$("prompt").addEventListener("input", renderPromptPreview);
 
 goBtn.addEventListener("click", () => {
   const n = parseInt($("ntokens").value, 10);
