@@ -579,6 +579,15 @@ def _main() -> None:
         min_lr=hp.min_lr,
     )
 
+    # Tag checkpoint filenames with the current git SHA (plus -dirty if the
+    # working tree has uncommitted changes). Same convention as the HF
+    # upload filenames, so two training runs from different commits don't
+    # silently overwrite each other.
+    run_sha = git_sha()
+    sha_suffix = f"_{run_sha}" if run_sha else ""
+    if run_sha:
+        print(f"checkpoint filenames tagged with git SHA: {run_sha}")
+
     writer: SummaryWriter | None = None
     if not args.no_tensorboard:
         run_name = f"{datetime.now():%Y%m%d-%H%M%S}_{ACTIVE_PROFILE}_{args.dataset}"
@@ -650,7 +659,7 @@ def _main() -> None:
                         )
                 ckpt_path = os.path.join(
                     checkpoint_dir,
-                    f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}.pt",
+                    f"ckpt_{ACTIVE_PROFILE}_step_{iter:05d}{sha_suffix}.pt",
                 )
                 ckpt_payload: dict[str, object] = {
                     "iter": iter,
@@ -703,11 +712,13 @@ def _main() -> None:
         return
 
     repo = args.upload_repo or manifest_repo()
-    sha = git_sha()
+    # Reuse the SHA captured at training start so the upload finds the
+    # file regardless of any post-training commits.
+    sha = run_sha
     final_step = last_saved_step
     final_ckpt = os.path.join(
         checkpoint_dir,
-        f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}.pt",
+        f"ckpt_{ACTIVE_PROFILE}_step_{final_step:05d}{sha_suffix}.pt",
     )
     if not repo:
         print(
