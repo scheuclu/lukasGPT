@@ -23,7 +23,7 @@ class Hyperparameters(BaseModel):
     n_embd: int = 384
     n_head: int = 6
     n_layer: int = 6
-    block_size: int = 2048
+    block_size: int = 1024
     dropout: float = 0.2
     # Training (not persisted; only used in the training branch)
     batch_size: int = 128
@@ -520,6 +520,12 @@ def _main() -> None:
         data = _encode_corpus_with_progress(text, tokenizer)
         torch.save({"tokenizer_state": cached_state, "data": data}, cache_path)
         print(f"  cached encoded corpus to {cache_path}")
+    # `text` (up to ~7 GB on Gutenberg-10k) isn't needed anymore — training
+    # samples from `data`. Drop it so it doesn't shadow the model's GPU
+    # memory headroom during the long-running training loop.
+    text_chars = len(text)
+    del text
+    print(f"freed source corpus ({text_chars:,} chars)")
     n = int(0.9 * len(data))
     train_data = data[:n]
     val_data = data[n:]
