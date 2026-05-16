@@ -1,6 +1,8 @@
 
 # lukasGPT
 
+[try here](https://scheuclu.github.io/lukasGPT)
+
 Started as a fork of Karpathy's [Neural Networks: Zero To Hero](https://karpathy.ai/zero-to-hero.html) lecture series, specifically the first lecture on nanoGPT. This fork extends the original with a few extras: Pydantic hyperparameter profiles, checkpoints that carry their own architecture + vocab, depth-N lookahead sampling at inference time, and a Streamlit dashboard for exploring the learned embeddings.
 
 ## Quickstart
