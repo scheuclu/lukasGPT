@@ -83,6 +83,47 @@ uv run tensorboard --logdir=runs --bind_all
 
 Then hit `http://<this-machine>:6006` from your phone/laptop over Tailscale.
 
+## Live system monitor (Netdata)
+
+For "what is my GPU actually doing right now" during long training runs, [Netdata](https://www.netdata.cloud/) gives a real-time web dashboard with NVIDIA GPU utilization / VRAM / temperature, CPU per-core, memory, disk I/O, network, and processes. No config needed — it auto-detects everything that's installed.
+
+**One-time install** via the official kickstart script (installs as a systemd service, no Docker required):
+
+```bash
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && \
+  sh /tmp/netdata-kickstart.sh --non-interactive --stable-channel --no-updates
+```
+
+**Day-to-day** via the Makefile:
+
+```bash
+make monitor          # status + dashboard URL
+make monitor-stop     # systemctl stop netdata
+make monitor-restart  # systemctl restart netdata
+make monitor-logs     # journalctl -fu netdata
+```
+
+Dashboard at `http://localhost:19999`, or `http://<this-machine>:19999` over Tailscale.
+
+**Containerized alternative.** If you'd rather not install the agent system-wide, the Makefile also wraps a Netdata docker container:
+
+```bash
+make monitor-docker          # docker run with all the host mounts + --gpus all
+make monitor-docker-stop     # docker rm -f netdata (named volumes survive)
+make monitor-docker-logs     # docker logs -f netdata
+```
+
+Requires Docker on the host and your user in the `docker` group.
+
+**Uninstall (native).** Re-invoke the kickstart with `--uninstall`:
+
+```bash
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && \
+  sh /tmp/netdata-kickstart.sh --uninstall --non-interactive
+```
+
+That stops the systemd service, removes the package, drops the `netdata` user, and cleans up `/etc/netdata`, `/var/lib/netdata`, `/var/log/netdata`, `/var/cache/netdata`. Verify with `systemctl status netdata` (should report "not-found") and `which netdata` (should be empty). If the uninstaller isn't reachable via kickstart anymore, find it with `sudo find / -name netdata-uninstaller.sh 2>/dev/null` and run it directly.
+
 ## Browser-side inference (ONNX + GitHub Pages)
 
 A trained checkpoint can be exported to ONNX and run entirely in the visitor's browser via ONNX Runtime Web — no server, no API key.
