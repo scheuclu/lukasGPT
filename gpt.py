@@ -448,6 +448,25 @@ def _main() -> None:
         default=1024,
         help="Target vocab size when --tokenizer is 'bpe'. Ignored otherwise.",
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to a checkpoint to resume training from. Loads model weights only; "
+        "warmup and plateau scheduler restart fresh.",
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="Override the profile's learning_rate (target lr after warmup).",
+    )
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=None,
+        help="Override the profile's min_lr (floor for the plateau scheduler).",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(1337)
@@ -479,6 +498,10 @@ def _main() -> None:
 
     assert device == "cuda", "training requires CUDA"
     hp = PROFILES[ACTIVE_PROFILE]
+    if args.learning_rate is not None:
+        hp.learning_rate = args.learning_rate
+    if args.min_lr is not None:
+        hp.min_lr = args.min_lr
     print(f"Using profile '{ACTIVE_PROFILE}': {hp.model_dump()}")
 
     dataset = corpora.get(args.dataset)
@@ -564,6 +587,20 @@ def _main() -> None:
     with torch.no_grad():
         freqs = token_counts.float().to(device).clamp(min=1.0)
         model.lm_head.bias.copy_((freqs / freqs.sum()).log())
+
+    if args.resume is not None:
+        print(f"resuming from checkpoint: {args.resume}")
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        if ckpt.get("tokenizer_type") != tokenizer.name or ckpt.get(
+            "tokenizer_state"
+        ) != tokenizer.state_dict():
+            raise ValueError(
+                f"checkpoint tokenizer doesn't match current run "
+                f"({ckpt.get('tokenizer_type')} vs {tokenizer.name})"
+            )
+        state = {k: v for k, v in ckpt["model"].items() if not k.endswith(".tril")}
+        model.load_state_dict(state)
+        print(f"  loaded weights from step {ckpt.get('iter', '?')}")
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=hp.learning_rate)
