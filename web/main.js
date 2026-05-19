@@ -15,6 +15,8 @@ const output = $("output");
 const stats = $("stats");
 const goBtn = $("go");
 const promptPreview = $("prompt-preview");
+const progressWrap = $("progress-wrap");
+const progressBar = $("progress-bar");
 
 let session = null;
 let chars = null;
@@ -44,6 +46,32 @@ function renderPromptPreview() {
   tokens.forEach((t, i) => appendTokenSpan(promptPreview, t, i, false));
 }
 
+// Stream a binary asset, calling `onProgress(loaded, total)` as bytes arrive.
+// `total` is 0 if the server didn't send Content-Length (or sent it for the
+// compressed payload while the browser auto-decompresses — we can't tell).
+async function fetchWithProgress(url, onProgress) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`);
+  const total = parseInt(res.headers.get("content-length") || "0", 10);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress(loaded, total);
+  }
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 async function init() {
   try {
     status.textContent = "loading vocab…";
@@ -59,11 +87,29 @@ async function init() {
     // than waiting through the ~10s model load.
     renderPromptPreview();
 
-    status.textContent = `loading model (this is the big one — ~${"40 MB"})…`;
+    // Stream the .onnx download so we can show a real progress bar. ORT's
+    // InferenceSession.create accepts a Uint8Array directly, so we just
+    // hand it the assembled bytes once the download finishes.
+    progressWrap.hidden = false;
+    const modelBytes = await fetchWithProgress("./model.onnx", (loaded, total) => {
+      const mb = (loaded / 1e6).toFixed(1);
+      if (total) {
+        const pct = Math.min(100, (loaded / total) * 100);
+        progressBar.style.width = `${pct}%`;
+        const totalMb = (total / 1e6).toFixed(0);
+        status.textContent = `downloading model · ${mb} / ${totalMb} MB (${pct.toFixed(0)}%)`;
+      } else {
+        status.textContent = `downloading model · ${mb} MB`;
+      }
+    });
+    status.textContent = "compiling model…";
+    progressWrap.classList.add("indeterminate");
     // Prefer WebGPU; fall back to WASM.
-    session = await ort.InferenceSession.create("./model.onnx", {
+    session = await ort.InferenceSession.create(modelBytes, {
       executionProviders: ["webgpu", "wasm"],
     });
+    progressWrap.classList.remove("indeterminate");
+    progressWrap.hidden = true;
     // Surface which fast paths are actually available. crossOriginIsolated
     // implies SharedArrayBuffer works, which lets ORT use multi-threaded
     // WASM; without it, ORT silently falls back to a slower single thread.
@@ -76,6 +122,8 @@ async function init() {
     goBtn.disabled = false;
   } catch (err) {
     status.textContent = `init failed: ${err.message}`;
+    progressWrap.classList.remove("indeterminate");
+    progressWrap.hidden = true;
     console.error(err);
   }
 }

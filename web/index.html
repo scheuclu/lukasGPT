@@ -205,6 +205,30 @@
       padding-left: 0.15rem;
     }
 
+    #progress-wrap {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      margin: 0.35rem 0 0.75rem;
+      overflow: hidden;
+      position: relative;
+    }
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.15s ease-out;
+    }
+    #progress-wrap.indeterminate #progress-bar {
+      width: 30%;
+      animation: indeterminate 1.1s ease-in-out infinite;
+    }
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(330%); }
+    }
+
     #output {
       position: relative;
       white-space: pre-wrap;
@@ -327,6 +351,7 @@
   </div>
 
   <div id="status">initializing…</div>
+  <div id="progress-wrap" hidden><div id="progress-bar"></div></div>
   <div id="output"></div>
   <p class="stats" id="stats"></p>
 
